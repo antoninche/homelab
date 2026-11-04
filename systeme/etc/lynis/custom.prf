@@ -1,0 +1,5 @@
+# Réglages du homelab pour Lynis (audit chaque nuit à 00:30, lynis.timer)
+# eth0 est rattachée au pont réseau de la VM Home Assistant : le mode promiscuité est normal
+if_promisc:eth0:pont reseau de la VM Home Assistant:
+# Lynis prend le noyau pour Pi 4 (gardé exprès : une sauvegarde peut ainsi démarrer sur un Pi 4) pour un noyau en attente
+skip-test=KRNL-5830

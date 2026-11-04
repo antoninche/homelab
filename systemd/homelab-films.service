@@ -1,0 +1,12 @@
+# Relais vers le conteneur ; s'arrête après 30min sans connexion, ce qui arrête aussi le conteneur.
+[Unit]
+Description=Films (Jellyfin) à la demande (relais vers 127.0.0.1:18022, arrêt après 30min sans activité)
+Requires=homelab-films-conteneur.service
+BindsTo=homelab-films-conteneur.service
+After=homelab-films-conteneur.service
+
+[Service]
+# attendre que le service réponde vraiment avant de laisser passer la visite
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 150); do [ "$(curl -s http://127.0.0.1:18022/health)" = Healthy ] && exit 0; sleep 2; done; exit 1'
+ExecStart=/lib/systemd/systemd-socket-proxyd --exit-idle-time=30min 127.0.0.1:18022
+TimeoutStartSec=330

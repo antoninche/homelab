@@ -1,0 +1,10 @@
+# Conteneur kiwix, lancé seulement quand le relais en a besoin.
+[Unit]
+Description=Conteneur kiwix (à la demande)
+StopWhenUnneeded=yes
+
+[Service]
+ExecStart=/usr/bin/docker start -a kiwix
+ExecStop=/usr/bin/docker stop kiwix
+# kiwix-serve quitte avec le code 143 quand on l arrête (signal TERM) : c est un arrêt normal
+SuccessExitStatus=143

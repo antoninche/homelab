@@ -1,0 +1,9 @@
+# Wikipédia hors ligne à la demande : systemd écoute à la place du conteneur ; la première connexion le démarre.
+[Unit]
+Description=Wikipédia hors ligne à la demande (écoute 127.0.0.1:8020)
+
+[Socket]
+ListenStream=127.0.0.1:8020
+
+[Install]
+WantedBy=sockets.target

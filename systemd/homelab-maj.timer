@@ -1,0 +1,8 @@
+[Unit]
+Description=Mise à jour des conteneurs du homelab (planification)
+[Timer]
+OnCalendar=Sun *-*-* 04:30
+RandomizedDelaySec=0
+Persistent=true
+[Install]
+WantedBy=timers.target

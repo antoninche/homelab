@@ -1,0 +1,9 @@
+[Unit]
+Description=Image du disque du Pi vers OneDrive (planification : dimanche, après les mises à jour)
+
+[Timer]
+OnCalendar=Sun *-*-* 05:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Publication de l'IP locale du Pi sur DuckDNS
+Wants=network-online.target
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-duckdns

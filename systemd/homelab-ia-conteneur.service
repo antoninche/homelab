@@ -1,0 +1,8 @@
+# Conteneur ia, lancé seulement quand le relais en a besoin.
+[Unit]
+Description=Conteneur ia (à la demande)
+StopWhenUnneeded=yes
+
+[Service]
+ExecStart=/usr/bin/docker start -a ia
+ExecStop=/usr/bin/docker stop ia

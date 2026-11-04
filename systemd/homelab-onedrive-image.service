@@ -1,0 +1,9 @@
+[Unit]
+Description=Image du disque du Pi vers OneDrive (à flasher avec Raspberry Pi Imager)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-onedrive image
+TimeoutStartSec=20h

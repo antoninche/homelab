@@ -1,0 +1,10 @@
+[Unit]
+Description=Faits de la salle de controle chaque minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+# Stirling-PDF à la demande : systemd écoute à la place du conteneur ; la première connexion le démarre.
+[Unit]
+Description=Stirling-PDF à la demande (écoute 127.0.0.1:8008)
+
+[Socket]
+ListenStream=127.0.0.1:8008
+
+[Install]
+WantedBy=sockets.target

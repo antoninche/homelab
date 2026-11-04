@@ -1,0 +1,8 @@
+[Unit]
+Description=Sauvegarde du homelab (planification)
+[Timer]
+OnCalendar=*-*-* 03:30
+RandomizedDelaySec=0
+Persistent=true
+[Install]
+WantedBy=timers.target

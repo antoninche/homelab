@@ -1,0 +1,7 @@
+[Unit]
+Description=Renouvellement du certificat Let's Encrypt
+Wants=network-online.target
+After=network-online.target docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-certs

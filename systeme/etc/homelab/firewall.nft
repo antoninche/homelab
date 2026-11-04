@@ -1,0 +1,54 @@
+#!/usr/sbin/nft -f
+# Pare-feu de l'hôte : tout est refusé en entrée sauf depuis un réseau privé (n'importe quel réseau domestique).
+# Table dédiée : ne touche pas aux règles de Docker ni de libvirt.
+table inet homelab
+delete table inet homelab
+
+table inet homelab {
+    set lan4 {
+        type ipv4_addr; flags interval
+        elements = { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 }
+    }
+    set lan6 {
+        type ipv6_addr; flags interval
+        elements = { fe80::/10, fc00::/7 }
+    }
+
+    chain input {
+        type filter hook input priority filter - 10; policy drop;
+
+        ct state established,related accept
+        ct state invalid drop
+        iifname "lo" accept
+        meta l4proto { icmp, ipv6-icmp } accept
+
+        # adresse IP fournie par la box (DHCPv4 / DHCPv6)
+        udp sport 67 udp dport 68 accept
+        udp dport 546 accept
+
+        # VM Home Assistant -> Pi : DHCP et DNS du réseau privé
+        iifname "virbr-ha" udp dport { 53, 67 } accept
+        iifname "virbr-ha" tcp dport 53 accept
+        # Home Assistant (VM) -> nginx : intégrations vers les autres services
+        iifname "virbr-ha" tcp dport 443 accept
+        # conteneurs -> nginx du Pi (sondes Uptime Kuma, etc.)
+        iifname "docker0" tcp dport { 80, 443 } accept
+        iifname "br-*" tcp dport { 80, 443 } accept
+
+        # appareils connectés via Tailscale : mêmes accès que le réseau local
+        iifname "tailscale0" tcp dport { 22, 80, 443 } accept
+        # Tailscale : connexions directes entre appareils (sinon relais chiffrés, plus lents)
+        udp dport 41641 accept
+
+        # réseau local : SSH, web (nginx)
+        ip saddr @lan4 tcp dport { 22, 80, 443 } accept
+        ip6 saddr @lan6 tcp dport { 22, 80, 443 } accept
+        # découverte des appareils (mDNS, avahi)
+        ip saddr @lan4 udp dport 5353 accept
+        ip6 saddr @lan6 udp dport 5353 accept
+
+        # tentatives de connexion TCP refusées (affichées dans la salle de contrôle)
+        tcp flags & (syn | ack) == syn counter comment "refus"
+        limit rate 6/minute log prefix "homelab-refus: " level info
+    }
+}

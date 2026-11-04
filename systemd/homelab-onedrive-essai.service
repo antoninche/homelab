@@ -1,0 +1,11 @@
+[Unit]
+Description=Essai de restauration complet des sauvegardes OneDrive (image vérifiée, copie de nuit restaurée et comparée)
+After=network-online.target
+Wants=network-online.target
+OnFailure=homelab-alerte@%n.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-onedrive essai
+Nice=10
+IOSchedulingClass=idle

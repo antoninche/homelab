@@ -1,0 +1,10 @@
+[Unit]
+Description=Portail captif : vérifie chaque minute qu'Internet passe
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

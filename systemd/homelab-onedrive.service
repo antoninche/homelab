@@ -1,0 +1,9 @@
+[Unit]
+Description=Sauvegarde de la nuit vers OneDrive (copie complète du système)
+Wants=network-online.target
+After=network-online.target docker.service libvirtd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-onedrive quotidienne
+TimeoutStartSec=20h

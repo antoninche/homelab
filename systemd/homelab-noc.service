@@ -1,0 +1,6 @@
+[Unit]
+Description=Faits de l hote pour la salle de controle
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-noc

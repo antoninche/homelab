@@ -1,0 +1,9 @@
+[Unit]
+Description=Essai de restauration des sauvegardes OneDrive (le 8 de chaque mois, la nuit)
+
+[Timer]
+OnCalendar=*-*-08 00:45
+Persistent=true
+
+[Install]
+WantedBy=timers.target

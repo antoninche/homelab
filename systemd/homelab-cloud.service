@@ -1,0 +1,11 @@
+[Unit]
+Description=Nextcloud à la demande (relais vers 127.0.0.1:18002, arrêt après 30 min sans activité)
+Requires=homelab-cloud-conteneur.service
+BindsTo=homelab-cloud-conteneur.service
+After=homelab-cloud-conteneur.service
+
+[Service]
+# attend que Nextcloud réponde vraiment (base prête, application installée) avant de laisser passer les visites
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 150); do curl -s http://127.0.0.1:18002/status.php | grep -q "\\"installed\\":true" && exit 0; sleep 2; done; exit 1'
+ExecStart=/lib/systemd/systemd-socket-proxyd --exit-idle-time=30min 127.0.0.1:18002
+TimeoutStartSec=330

@@ -1,0 +1,8 @@
+[Unit]
+Description=Renouvellement du certificat Let's Encrypt (planification)
+[Timer]
+OnCalendar=*-*-* 03:15
+RandomizedDelaySec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target

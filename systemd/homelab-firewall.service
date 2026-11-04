@@ -1,0 +1,15 @@
+[Unit]
+Description=Pare-feu du homelab (table nftables inet homelab)
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/homelab/firewall.nft
+ExecReload=/usr/sbin/nft -f /etc/homelab/firewall.nft
+ExecStop=/usr/sbin/nft delete table inet homelab
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,6 @@
+[Unit]
+Description=Alerte ntfy : échec de %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-alerte %i

@@ -1,0 +1,12 @@
+# Relais vers le conteneur ; s'arrête après 15 min sans connexion, ce qui arrête aussi le conteneur.
+[Unit]
+Description=Stirling-PDF à la demande (relais vers 127.0.0.1:18008)
+Requires=homelab-pdf-conteneur.service
+BindsTo=homelab-pdf-conteneur.service
+After=homelab-pdf-conteneur.service
+
+[Service]
+# attendre que l'application Java réponde (≈ 1 min sur le Pi)
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 150); do [ "$(curl -s -o /dev/null -w %%{http_code} http://127.0.0.1:18008/login)" = 200 ] && exit 0; sleep 2; done; exit 1'
+ExecStart=/lib/systemd/systemd-socket-proxyd --exit-idle-time=15min 127.0.0.1:18008
+TimeoutStartSec=330

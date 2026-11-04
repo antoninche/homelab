@@ -1,0 +1,12 @@
+[Unit]
+Description=Conteneurs Nextcloud (à la demande : base, cache, application, tâches de fond)
+StopWhenUnneeded=yes
+
+[Service]
+ExecStartPre=/usr/bin/docker start nextcloud-db nextcloud-redis
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ "$(docker inspect -f "{{.State.Health.Status}}" nextcloud-db)" = healthy ] && exit 0; sleep 2; done; exit 1'
+ExecStart=/usr/bin/docker start -a nextcloud
+ExecStartPost=/usr/bin/docker start nextcloud-cron
+ExecStop=/usr/bin/docker stop nextcloud-cron nextcloud
+ExecStopPost=/usr/bin/docker stop nextcloud-redis nextcloud-db
+TimeoutStartSec=200

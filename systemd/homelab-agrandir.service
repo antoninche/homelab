@@ -1,0 +1,11 @@
+[Unit]
+Description=Agrandit le système à tout le disque au premier démarrage après une restauration
+ConditionPathExists=/etc/homelab/agrandir-au-demarrage
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-onedrive agrandir
+
+[Install]
+WantedBy=multi-user.target

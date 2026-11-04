@@ -1,0 +1,12 @@
+# Relais vers le conteneur ; s'arrête après 30min sans connexion, ce qui arrête aussi le conteneur.
+[Unit]
+Description=Wikipédia hors ligne à la demande (relais vers 127.0.0.1:18020, arrêt après 30min sans activité)
+Requires=homelab-wiki-conteneur.service
+BindsTo=homelab-wiki-conteneur.service
+After=homelab-wiki-conteneur.service
+
+[Service]
+# attendre que le service réponde vraiment avant de laisser passer la visite
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do [ "$(curl -s -o /dev/null -w %%{http_code} http://127.0.0.1:18020/)" = 200 ] && exit 0; sleep 1; done; exit 1'
+ExecStart=/lib/systemd/systemd-socket-proxyd --exit-idle-time=30min 127.0.0.1:18020
+TimeoutStartSec=330

@@ -1,0 +1,8 @@
+[Unit]
+Description=Nextcloud à la demande (écoute 127.0.0.1:8002)
+
+[Socket]
+ListenStream=127.0.0.1:8002
+
+[Install]
+WantedBy=sockets.target

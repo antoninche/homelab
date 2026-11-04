@@ -1,0 +1,11 @@
+[Unit]
+Description=Portail captif de la résidence : reconnexion si le portail a coupé Internet
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-portail
+Nice=10
+# lancé chaque minute : seuls les messages du script vont au journal, pas les « Starting/Finished » de systemd
+LogLevelMax=notice

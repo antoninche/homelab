@@ -1,0 +1,12 @@
+# Relais vers le conteneur ; s'arrête après 15min sans connexion, ce qui arrête aussi le conteneur.
+[Unit]
+Description=IA locale à la demande (relais vers 127.0.0.1:18021, arrêt après 15min sans activité)
+Requires=homelab-ia-conteneur.service
+BindsTo=homelab-ia-conteneur.service
+After=homelab-ia-conteneur.service
+
+[Service]
+# attendre que le service réponde vraiment avant de laisser passer la visite
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 150); do curl -sf http://127.0.0.1:18021/health >/dev/null && exit 0; sleep 2; done; exit 1'
+ExecStart=/lib/systemd/systemd-socket-proxyd --exit-idle-time=15min 127.0.0.1:18021
+TimeoutStartSec=330

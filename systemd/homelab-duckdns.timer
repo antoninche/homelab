@@ -1,0 +1,7 @@
+[Unit]
+Description=Publication DuckDNS toutes les 5 minutes
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5min
+[Install]
+WantedBy=timers.target

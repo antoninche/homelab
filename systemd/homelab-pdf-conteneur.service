@@ -1,0 +1,8 @@
+# Conteneur Stirling-PDF, lancé seulement quand le relais en a besoin.
+[Unit]
+Description=Conteneur Stirling-PDF (à la demande)
+StopWhenUnneeded=yes
+
+[Service]
+ExecStart=/usr/bin/docker start -a stirling-pdf
+ExecStop=/usr/bin/docker stop stirling-pdf

@@ -1,0 +1,9 @@
+# Films (Jellyfin) à la demande : systemd écoute à la place du conteneur ; la première connexion le démarre.
+[Unit]
+Description=Films (Jellyfin) à la demande (écoute 127.0.0.1:8022)
+
+[Socket]
+ListenStream=127.0.0.1:8022
+
+[Install]
+WantedBy=sockets.target
