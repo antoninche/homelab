@@ -1,0 +1,2 @@
+# Les modèles nginx (.tpl) ne sont pas des gabarits Smarty
+*.tpl linguist-language=Nginx

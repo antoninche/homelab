@@ -1,0 +1,19 @@
+# Secrets et fichiers générés : jamais dans le dépôt
+secrets/
+*.key
+*.pem
+*.env
+!*.env.exemple
+IDENTIFIANTS.txt
+rclone.conf
+portail-operateur.sh
+
+# Fichiers rendus à partir des modèles et des secrets par « homelab render »
+stacks/proxy/conf.d/
+stacks/proxy/snippets/netalertx-api.conf
+
+# Données écrites par homelab-noc
+stacks/proxy/site/noc/data/
+
+# Système
+.DS_Store
