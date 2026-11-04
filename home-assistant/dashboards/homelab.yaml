@@ -1,0 +1,604 @@
+# Tableau « Homelab » (/homelab-pi) : santé du Raspberry Pi, réseau, services et maintenance.
+# Même style que l'écran d'accueil (thème « Verre », verre dépoli façon Apple) ; s'adapte au téléphone et à l'ordinateur.
+# Sources : Glances (mesures du Pi), Uptime Kuma (sondes), AdGuard, Portainer (conteneurs), Immich, Watchman. Nextcloud et Stirling-PDF sont en veille (démarrage à la demande).
+# Capteurs de synthèse : packages/appart.yaml. Après une modification : menu ⋮ → « Actualiser ».
+
+title: Homelab
+
+# ── Modèles réutilisés (ancres YAML, à fusionner avec « <<: ») ──
+x-modeles:
+  demi: &demi
+    grid_options:
+      columns: 6
+  plein: &plein
+    grid_options:
+      columns: 12
+  tendance: &tendance             # courbe des dernières 24 h sous la tuile
+    features_position: bottom
+    features:
+      - type: trend-graph
+        hours_to_show: 24
+  jauge: &jauge                   # barre de remplissage 0–100 % sous la tuile
+    features_position: bottom
+    features:
+      - type: bar-gauge
+        min: 0
+        max: 100
+  confirmer: &confirmer           # demande confirmation avant une action sensible
+    confirmation:
+      text: Confirmer cette action ?
+
+# ── Capteurs du Raspberry Pi (Glances) : noms courts pour la lecture ──
+x-pi:
+  processeur: &pi-processeur sensor.noc_exemple_duckdns_org_utilisation_du_processeur
+  memoire: &pi-memoire sensor.noc_exemple_duckdns_org_utilisation_de_la_memoire
+  swap: &pi-swap sensor.noc_exemple_duckdns_org_utilisation_de_l_espace_d_echange
+  disque: &pi-disque sensor.noc_exemple_duckdns_org_utilisation_disque_etc_hostname
+  temperature: &pi-temperature sensor.noc_exemple_duckdns_org_temperature_cpu_thermal_0
+  temperature-nvme: &pi-temperature-nvme sensor.noc_exemple_duckdns_org_temperature_composite
+  ventilateur: &pi-ventilateur sensor.noc_exemple_duckdns_org_vitesse_ventilateur_pwmfan_0
+  charge: &pi-charge sensor.noc_exemple_duckdns_org_charge_du_processeur
+  cpu-conteneurs: &pi-cpu-conteneurs sensor.processeur_des_conteneurs   # 0–100 % du processeur entier (packages/appart.yaml)
+  memoire-conteneurs: &pi-memoire-conteneurs sensor.noc_exemple_duckdns_org_memoire_utilisee_par_les_conteneurs
+  conteneurs: &pi-conteneurs sensor.noc_exemple_duckdns_org_conteneurs_actifs
+  demarrage: &pi-demarrage sensor.noc_exemple_duckdns_org_temps_de_fonctionnement
+  reception: &pi-reception sensor.noc_exemple_duckdns_org_eth0_rx
+  emission: &pi-emission sensor.noc_exemple_duckdns_org_eth0_tx
+  tailscale-reception: &pi-tailscale-reception sensor.noc_exemple_duckdns_org_tailscale0_rx
+  tailscale-emission: &pi-tailscale-emission sensor.noc_exemple_duckdns_org_tailscale0_tx
+
+views:
+  - title: Homelab
+    path: homelab
+    icon: mdi:server-network
+    type: sections
+    theme: Verre
+    max_columns: 3
+    dense_section_placement: true
+
+    header:
+      layout: responsive
+      badges_position: bottom
+      badges_wrap: wrap
+      card:
+        type: markdown
+        text_only: true
+        content: >
+          {% set nb = '\u00a0' %}{# espace insécable : « hors ligne » ne se coupe pas #}
+          # Homelab
+
+          Raspberry Pi 5 · 192.168.8.10 · {{ states('sensor.etat_du_raspberry_pi') | lower }}
+          · {{ state_attr('sensor.services_hors_ligne', 'total') }}{{ nb }}sondes, {{ states('sensor.services_hors_ligne') }}{{ nb }}hors{{ nb }}ligne
+        # le titre est dans la « shadow root » de ha-markdown : il faut y entrer (« ha-markdown$ »)
+        card_mod:
+          style:
+            ha-markdown$: |
+              h1 { font-size: 2.15em; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1 !important; margin: 0 0 6px; }
+              p { color: var(--secondary-text-color); font-size: 1.05em; margin: 0; }
+
+    badges:
+      - type: custom:mushroom-template-badge
+        entity: sensor.etat_du_raspberry_pi
+        icon: mdi:raspberry-pi
+        color: "{{ {'Fluide': 'green', 'Chargé': 'orange', 'Saturé': 'red'}.get(states(entity), 'grey') }}"
+        label: Raspberry Pi
+        content: "{{ states(entity) }}"
+      - type: custom:mushroom-template-badge
+        entity: sensor.services_hors_ligne
+        icon: "{{ 'mdi:help-network' if not has_value(entity) else 'mdi:check-network' if states(entity) | int == 0 else 'mdi:alert-circle' }}"
+        color: "{{ 'grey' if not has_value(entity) else 'green' if states(entity) | int == 0 else 'red' }}"
+        label: Services
+        content: >
+          {% if not has_value(entity) %}État inconnu
+          {% else %}{% set n = states(entity) | int %}{{ 'Tout répond' if n == 0 else n ~ ' en panne' }}{% endif %}
+        tap_action:
+          action: url
+          url_path: https://status.exemple.duckdns.org/status/homelab
+      - type: entity
+        entity: sensor.internet_temps_de_reponse
+        name: Internet
+        show_name: true
+        icon: mdi:web
+      - type: entity
+        entity: sensor.adguard_home_taux_de_requetes_dns_bloquees
+        name: Pubs bloquées
+        show_name: true
+        icon: mdi:shield-check
+      - type: entity
+        entity: sensor.mises_a_jour_en_attente
+        name: Mises à jour
+        show_name: true
+        color: orange
+        visibility:
+          - condition: numeric_state
+            entity: sensor.mises_a_jour_en_attente
+            above: 0
+
+    sections:
+      # ═══════════════════════════ Raspberry Pi ═══════════════════════════
+      - type: grid
+        cards:
+          - type: heading
+            heading: Raspberry Pi
+            icon: mdi:raspberry-pi
+          - type: custom:mushroom-template-card
+            entity: sensor.etat_du_raspberry_pi
+            primary: "{{ states(entity) }}"
+            secondary: "{{ state_attr(entity, 'details') or '' }}"
+            icon: mdi:raspberry-pi
+            color: "{{ {'Fluide': 'green', 'Chargé': 'orange', 'Saturé': 'red'}.get(states(entity), 'grey') }}"
+            multiline_secondary: true
+            <<: *plein
+          - type: tile
+            entity: *pi-processeur
+            name: Processeur
+            icon: mdi:cpu-64-bit
+            color: blue
+            <<: [*demi, *jauge]
+          - type: tile
+            entity: *pi-memoire
+            name: Mémoire
+            icon: mdi:memory
+            color: purple
+            <<: [*demi, *jauge]
+          - type: tile
+            entity: *pi-disque
+            name: Disque NVMe
+            icon: mdi:harddisk
+            color: teal
+            <<: [*demi, *jauge]
+          - type: tile
+            entity: *pi-swap
+            name: Swap
+            icon: mdi:swap-horizontal
+            color: indigo
+            <<: [*demi, *jauge]
+          - type: tile
+            entity: *pi-temperature
+            name: Température
+            icon: mdi:thermometer
+            color: orange
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: *pi-temperature-nvme
+            name: Temp. NVMe
+            icon: mdi:thermometer-lines
+            color: amber
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: *pi-ventilateur
+            name: Ventilateur
+            icon: mdi:fan
+            color: cyan
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: *pi-charge
+            name: Charge 15 min
+            icon: mdi:speedometer
+            color: blue
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: sensor.raspberry_pi_puissance
+            name: Consommation
+            icon: mdi:flash
+            color: amber
+            <<: [*plein, *tendance]
+          - type: tile
+            entity: *pi-demarrage
+            name: Démarré
+            icon: mdi:power
+            <<: *demi
+          - type: tile
+            entity: *pi-conteneurs
+            name: Conteneurs
+            icon: mdi:docker
+            color: blue
+            <<: *demi
+
+      # ═══════════════════════════ Réseau ═══════════════════════════
+      - type: grid
+        cards:
+          - type: heading
+            heading: Réseau
+            icon: mdi:lan
+            tap_action:
+              action: url
+              url_path: https://noc.exemple.duckdns.org
+          - type: tile
+            entity: sensor.internet_temps_de_reponse
+            name: Internet (latence)
+            icon: mdi:web
+            color: teal
+            <<: [*plein, *tendance]
+          - type: tile
+            entity: *pi-reception
+            name: Ethernet ↓
+            icon: mdi:download-network
+            color: cyan
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: *pi-emission
+            name: Ethernet ↑
+            icon: mdi:upload-network
+            color: pink
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: *pi-tailscale-reception
+            name: Tailscale ↓
+            icon: mdi:vpn
+            color: indigo
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: *pi-tailscale-emission
+            name: Tailscale ↑
+            icon: mdi:vpn
+            color: purple
+            <<: [*demi, *tendance]
+          # Sondes d'Uptime Kuma : réseau local et accès depuis l'extérieur
+          - type: entities
+            title: Sondes réseau
+            state_color: true
+            entities:
+              - entity: sensor.routeur_gl_inet_statut
+                name: Routeur GL.iNet (192.168.8.1)
+                icon: mdi:router-wireless
+                secondary_info: last-changed
+              - entity: sensor.camera_aqara_g3_statut
+                name: Caméra Aqara G3 (.20)
+                icon: mdi:cctv
+                secondary_info: last-changed
+              - entity: sensor.nest_hub_chambre_statut
+                name: Nest Hub (.21)
+                icon: mdi:tablet-dashboard
+                secondary_info: last-changed
+              - entity: sensor.dns_local_routeur_adguard_statut
+                name: DNS local (routeur → AdGuard)
+                icon: mdi:dns
+                secondary_info: last-changed
+              - type: divider
+              - entity: sensor.internet_statut
+                name: Internet
+                icon: mdi:web
+              - entity: sensor.nom_exemple_duckdns_org_statut
+                name: Nom exemple.duckdns.org
+                icon: mdi:web-check
+              - entity: sensor.duckdns_mise_a_jour_statut
+                name: DuckDNS (mise à jour)
+                icon: mdi:update
+              - entity: sensor.tailscale_connecte_statut
+                name: Tailscale connecté
+                icon: mdi:vpn
+            <<: *plein
+
+      # ═══════════════════════════ DNS et filtrage ═══════════════════════════
+      - type: grid
+        cards:
+          - type: heading
+            heading: DNS et filtrage
+            icon: mdi:shield-check
+          - type: tile
+            entity: switch.adguard_home_protection
+            name: Protection
+            icon: mdi:shield-check
+            color: green
+            tap_action: &basculer-avec-confirmation
+              action: toggle
+              <<: *confirmer
+            icon_tap_action: *basculer-avec-confirmation
+            <<: *demi
+          - type: tile
+            entity: switch.adguard_home_filtrage
+            name: Filtrage
+            icon: mdi:filter-check
+            color: green
+            tap_action: *basculer-avec-confirmation
+            icon_tap_action: *basculer-avec-confirmation
+            <<: *demi
+          - type: tile
+            entity: sensor.adguard_home_taux_de_requetes_dns_bloquees
+            name: Taux bloqué
+            icon: mdi:shield-off
+            color: green
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: sensor.adguard_home_vitesse_de_traitement_moyenne
+            name: Réponse DNS
+            icon: mdi:timer-outline
+            color: teal
+            <<: [*demi, *tendance]
+          - type: custom:mushroom-template-card
+            entity: sensor.adguard_home_requetes_dns
+            primary: Requêtes DNS
+            secondary: "{{ '{:,}'.format(states(entity) | int).replace(',', ' ') ~ ' sur 24 h' if has_value(entity) else 'Indisponible' }}"
+            icon: mdi:dns
+            color: teal
+            <<: *demi
+          - type: custom:mushroom-template-card
+            entity: sensor.adguard_home_requetes_dns_bloquees
+            primary: Dont bloquées
+            secondary: "{{ '{:,}'.format(states(entity) | int).replace(',', ' ') ~ ' requêtes' if has_value(entity) else 'Indisponible' }}"
+            icon: mdi:block-helper
+            color: green
+            <<: *demi
+
+      # ═══════════════════════════ Fichiers et photos ═══════════════════════════
+      - type: grid
+        cards:
+          - type: heading
+            heading: Fichiers et photos
+            icon: mdi:folder-multiple-image
+          - type: tile
+            entity: sensor.admin_nombre_de_photos
+            name: Photos
+            icon: mdi:image-multiple
+            color: pink
+            <<: *demi
+          - type: tile
+            entity: sensor.admin_nombre_de_videos
+            name: Vidéos
+            icon: mdi:filmstrip-box-multiple
+            color: purple
+            <<: *demi
+          # Nextcloud est en veille : il démarre à la première visite et s'arrête après 30 min sans activité
+          - type: custom:mushroom-template-card
+            primary: Nextcloud
+            secondary: En veille · démarre à la première visite
+            icon: mdi:cloud-outline
+            color: grey
+            tap_action:
+              action: url
+              url_path: https://cloud.exemple.duckdns.org
+            <<: *plein
+          - type: tile
+            entity: sensor.admin_disque_disponible
+            name: Espace libre
+            icon: mdi:harddisk
+            color: teal
+            <<: *plein
+
+      # ═══════════════════════════ Maintenance ═══════════════════════════
+      - type: grid
+        cards:
+          - type: heading
+            heading: Maintenance
+            icon: mdi:wrench
+          - type: custom:mushroom-template-card
+            entity: sensor.mises_a_jour_en_attente
+            primary: >
+              {% if not has_value(entity) %}Mises à jour : état inconnu
+              {% else %}{% set n = states(entity) | int %}{{ 'Tout est à jour' if n == 0 else n ~ ' mise' ~ ('s' if n > 1 else '') ~ ' à jour en attente' }}{% endif %}
+            secondary: Home Assistant, applis, HACS et appareils
+            icon: "{{ 'mdi:check-decagram' if states(entity) | int(-1) == 0 else 'mdi:package-up' }}"
+            color: "{{ 'grey' if not has_value(entity) else 'green' if states(entity) | int == 0 else 'orange' }}"
+            <<: *plein
+          # Sauvegarde de Home Assistant : chaque nuit à 3 h (chiffrée), copiée par la sauvegarde du Pi à 3 h 30
+          - type: custom:mushroom-template-card
+            entity: sensor.backup_last_successful_automatic_backup
+            primary: >
+              {% set t = states(entity) | as_datetime(none) %}
+              {% if t is none %}Aucune sauvegarde de Home Assistant
+              {% else %}{% set h = ((now() - t).total_seconds() / 3600) | round(0) | int %}Sauvegarde de HA {{ 'il y a moins d’une heure' if h < 1 else 'il y a ' ~ h ~ '\u00a0h' }}{% endif %}
+            secondary: >
+              {% set n = states('sensor.backup_next_scheduled_automatic_backup') | as_datetime(none) %}
+              Chaque nuit, chiffrée, copiée sur le Pi{% if n %} · prochaine le {{ (n | as_local).strftime('%d/%m à %H:%M') }}{% endif %}
+            icon: mdi:backup-restore
+            color: >
+              {% set t = states(entity) | as_datetime(none) %}
+              {{ 'red' if t is none else 'green' if (now() - t).total_seconds() < 26 * 3600 else 'orange' }}
+            multiline_secondary: true
+            <<: *plein
+          # Sauvegardes du Pi (sondes Uptime Kuma) : locale 3 h 30, OneDrive chaque nuit, image le dimanche, essai le 8
+          - type: custom:mushroom-template-card
+            entity: sensor.sauvegarde_onedrive_statut
+            primary: >
+              {% set s = {'locale': states('sensor.sauvegarde_nocturne_statut'), 'OneDrive': states(entity),
+                          'image': states('sensor.image_du_pi_onedrive_statut'),
+                          'essai': states('sensor.essai_de_restauration_onedrive_statut')} %}
+              {% set ns = namespace(ko=[]) %}{% for k, v in s.items() if v == 'down' %}{% set ns.ko = ns.ko + [k] %}{% endfor %}
+              {{ 'Sauvegardes du Pi à jour' if not ns.ko else 'Sauvegarde en échec : ' ~ ns.ko | join(', ') }}
+            secondary: >
+              Locale chaque nuit · OneDrive chaque nuit · image le dimanche · essai de restauration le 8 du mois
+              {%- if states('sensor.essai_de_restauration_onedrive_statut') != 'up' %} (premier essai à venir){% endif %}
+            icon: mdi:cloud-check
+            color: >
+              {% set l = [states('sensor.sauvegarde_nocturne_statut'), states(entity), states('sensor.image_du_pi_onedrive_statut'), states('sensor.essai_de_restauration_onedrive_statut')] %}
+              {{ 'red' if 'down' in l else 'green' if l[:3] | select('eq', 'up') | list | count == 3 else 'orange' }}
+            multiline_secondary: true
+            tap_action:
+              action: url
+              url_path: https://noc.exemple.duckdns.org
+            <<: *plein
+          # n'apparaît que s'il y a une mise à jour en attente
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: entities
+              title: Mises à jour disponibles
+            filter:
+              include:
+                - domain: update
+                  state: "on"
+            <<: *plein
+          - type: custom:mushroom-template-card
+            entity: sensor.watchman_missing_entities
+            # « cassée » = entité citée qui n'existe pas (erreur de configuration) ;
+            # « injoignable » = appareil débranché ou hors ligne (la configuration, elle, est saine)
+            primary: >
+              {% set e = state_attr(entity, 'entities') or [] %}
+              {% set n = e | selectattr('state', 'eq', 'missing') | list | count %}
+              {% if not has_value(entity) %}Watchman : état inconnu
+              {% elif n > 0 %}{{ n }} référence{{ 's' if n > 1 }} cassée{{ 's' if n > 1 }}
+              {% else %}Configuration saine{% endif %}
+            secondary: >
+              {% set e = state_attr(entity, 'entities') or [] %}
+              {% set inj = e | rejectattr('state', 'eq', 'missing') | map(attribute='friendly_name') | list %}
+              {% set cassees = e | selectattr('state', 'eq', 'missing') | map(attribute='id') | list %}
+              {% if cassees %}À corriger : {{ cassees | join(', ') }}
+              {% elif inj %}Injoignable{{ 's' if inj | count > 1 }} : {{ inj | join(', ') }}
+              {% else %}Watchman vérifie les entités citées dans le YAML et les tableaux{% endif %}
+            icon: >
+              {% set e = state_attr(entity, 'entities') or [] %}
+              {{ 'mdi:file-alert-outline' if e | selectattr('state', 'eq', 'missing') | list else 'mdi:file-check-outline' }}
+            color: >
+              {% set e = state_attr(entity, 'entities') or [] %}
+              {{ 'grey' if not has_value(entity) else 'orange' if e | selectattr('state', 'eq', 'missing') | list else 'green' }}
+            multiline_secondary: true
+            <<: *plein
+          - type: tile
+            entity: script.tester_les_notifications
+            name: Tester les notifications
+            icon: mdi:bell-ring
+            color: teal
+            hide_state: true
+            tap_action:
+              action: perform-action
+              perform_action: script.tester_les_notifications
+            <<: *plein
+
+      # ═══════════════════════════ Services ═══════════════════════════
+      - type: grid
+        cards:
+          - type: heading
+            heading: Services
+            icon: mdi:check-network
+            tap_action:
+              action: url
+              url_path: https://status.exemple.duckdns.org/status/homelab
+          - type: custom:mushroom-template-card
+            entity: sensor.services_hors_ligne
+            primary: >
+              {% if not has_value(entity) %}État des services inconnu
+              {% else %}{% set n = states(entity) | int %}{{ 'Tous les services répondent' if n == 0 else n ~ ' service' ~ ('s' if n > 1 else '') ~ ' en panne' }}{% endif %}
+            secondary: >
+              {% if not has_value(entity) %}Uptime Kuma ne répond pas
+              {% elif states(entity) | int > 0 %}{{ state_attr(entity, 'noms') }}
+              {% else %}{{ state_attr(entity, 'total') }} sondes Uptime Kuma au vert{% endif %}
+              {%- if state_attr(entity, 'sans_nouvelles') %} · sans nouvelles : {{ state_attr(entity, 'sans_nouvelles') }}{% endif %}
+            icon: "{{ 'mdi:help-network' if not has_value(entity) else 'mdi:check-network' if states(entity) | int == 0 else 'mdi:alert-circle' }}"
+            color: "{{ 'grey' if not has_value(entity) else 'green' if states(entity) | int == 0 else 'red' }}"
+            multiline_secondary: true
+            <<: *plein
+          - type: entities
+            title: Maison
+            state_color: true
+            entities:
+              - entity: sensor.home_assistant_statut
+                name: Home Assistant
+                icon: mdi:home-assistant
+              - entity: sensor.immich_statut
+                name: Immich
+                icon: mdi:image-multiple
+            <<: *plein
+          - type: entities
+            title: Applications
+            state_color: true
+            entities:
+              - entity: sensor.it_tools_statut
+                name: IT-Tools
+                icon: mdi:tools
+              - entity: sensor.site_local_statut
+                name: Site local
+                icon: mdi:web
+              - entity: sensor.apache_statut
+                name: Apache
+                icon: mdi:feather
+            <<: *plein
+          - type: entities
+            title: Administration
+            state_color: true
+            entities:
+              - entity: sensor.accueil_statut
+                name: Accueil (Homepage)
+                icon: mdi:view-dashboard
+              - entity: sensor.salle_de_controle_statut
+                name: Salle de contrôle
+                icon: mdi:radar
+              - entity: sensor.netalertx_statut
+                name: NetAlertX
+                icon: mdi:lan
+              - entity: sensor.ntfy_statut
+                name: ntfy
+                icon: mdi:bell-ring
+              - entity: sensor.portainer_statut
+                name: Portainer
+                icon: mdi:docker
+              - entity: sensor.dozzle_statut
+                name: Dozzle
+                icon: mdi:text-box-search
+            <<: *plein
+          - type: entities
+            title: Composants internes
+            state_color: true
+            entities:
+              - entity: sensor.nginx_proxy_statut
+                name: nginx (proxy)
+              - entity: sensor.socket_proxy_statut
+                name: socket-proxy
+              - entity: sensor.immich_postgresql_statut
+                name: Immich · PostgreSQL
+              - entity: sensor.immich_valkey_statut
+                name: Immich · Valkey
+              - entity: sensor.glances_statut
+                name: Glances
+              - entity: sensor.netalertx_moteur_statut
+                name: NetAlertX · moteur
+            <<: *plein
+
+      # ═══════════════════════════ Conteneurs ═══════════════════════════
+      - type: grid
+        cards:
+          - type: heading
+            heading: Conteneurs
+            icon: mdi:docker
+            tap_action:
+              action: url
+              url_path: https://portainer.exemple.duckdns.org
+          - type: tile
+            entity: *pi-cpu-conteneurs
+            name: Processeur
+            icon: mdi:cpu-64-bit
+            color: blue
+            <<: [*demi, *tendance]
+          - type: tile
+            entity: *pi-memoire-conteneurs
+            name: Mémoire
+            icon: mdi:memory
+            color: purple
+            <<: [*demi, *tendance]
+          # État de chaque conteneur d'après Portainer (sans l'hôte Docker « raspberrypi », ni Stirling-PDF qui dort tant qu'on ne s'en sert pas)
+          - type: custom:auto-entities
+            show_empty: false
+            card:
+              type: entities
+              title: En marche
+              state_color: true
+            filter:
+              template: >
+                {% set ns = namespace(liste=[]) %}
+                {% for s in integration_entities('portainer') | select('match', 'binary_sensor\..*_statut$') | reject('search', 'stirling|nextcloud|kiwix|jellyfin|^binary_sensor.ia_') | reject('eq', 'binary_sensor.raspberrypi_statut') %}
+                  {% set ns.liste = ns.liste + [{'entity': s, 'name': state_attr(s, 'friendly_name') | replace(' Statut', '')}] %}
+                {% endfor %}
+                {{ ns.liste | tojson }}
+            sort:
+              method: name
+            <<: *plein
+          - type: heading
+            heading: Redémarrer un conteneur
+            heading_style: subtitle
+          - type: tile
+            entity: button.immich_redemarrer_le_conteneur
+            name: Immich
+            hide_state: true
+            vertical: true
+            icon: mdi:restart
+            color: orange
+            tap_action: &redemarrer-immich
+              action: perform-action
+              perform_action: button.press
+              target:
+                entity_id: button.immich_redemarrer_le_conteneur
+              <<: *confirmer
+            icon_tap_action: *redemarrer-immich
+            grid_options:
+              columns: 4
+ 
