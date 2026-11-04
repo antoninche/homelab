@@ -1,0 +1,37 @@
+# Page d'accueil. Les clés d'API sont lues dans des fichiers (variables HOMEPAGE_FILE_*).
+name: homepage
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v2.7.0
+    container_name: homepage
+    restart: unless-stopped
+    ports: ["127.0.0.1:8001:3000"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    environment:
+      TZ: ${TZ}
+      PUID: "1000"
+      PGID: "1000"
+      HOMEPAGE_ALLOWED_HOSTS: ${DOMAIN},home.${DOMAIN}
+      HOMEPAGE_FILE_PORTAINER_KEY: /run/secrets/portainer_api_key
+      HOMEPAGE_FILE_IMMICH_KEY: /run/secrets/immich_api_key
+      HOMEPAGE_FILE_UPTIME_PASSWORD: /run/secrets/uptime_admin
+      HOMEPAGE_FILE_HA_TOKEN: /run/secrets/ha_token
+      HOMEPAGE_FILE_NOC_PASSWORD: /run/secrets/noc_admin
+      HOMEPAGE_FILE_NETALERTX_KEY: /run/secrets/netalertx_api
+    volumes:
+      - /srv/homelab/homepage/config:/app/config
+      - /srv/homelab/homepage/images:/app/public/images:ro
+    networks: [default, socket-proxy]
+    secrets: [portainer_api_key, immich_api_key, uptime_admin, ha_token, noc_admin, netalertx_api]
+
+networks:
+  socket-proxy: { external: true }
+
+secrets:
+  portainer_api_key: { file: /etc/homelab/secrets/portainer_api_key }
+  immich_api_key: { file: /etc/homelab/secrets/immich_api_key }
+  uptime_admin: { file: /etc/homelab/secrets/uptime_admin }
+  ha_token: { file: /etc/homelab/secrets/ha_token }
+  noc_admin: { file: /etc/homelab/secrets/noc_admin }
+  netalertx_api: { file: /etc/homelab/secrets/netalertx_api }

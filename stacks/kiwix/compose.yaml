@@ -1,0 +1,17 @@
+# Wikipédia et la bibliothèque hors ligne (Kiwix). Démarré à la demande : systemd écoute sur 127.0.0.1:8020
+# (homelab-wiki.socket), lance le conteneur à la première visite et l'arrête après 30 min sans activité.
+# Les fichiers .zim sont dans /srv/homelab/kiwix (« sudo homelab-survie » pour les télécharger ou les mettre à jour).
+name: kiwix
+services:
+  kiwix:
+    image: ghcr.io/kiwix/kiwix-serve:3.8.2
+    container_name: kiwix
+    restart: "no"
+    ports: ["127.0.0.1:18020:8080"]
+    command: ["*.zim"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    volumes:
+      - /srv/homelab/kiwix:/data:ro

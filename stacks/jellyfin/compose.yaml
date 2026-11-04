@@ -1,0 +1,21 @@
+# Films (Jellyfin). Démarré à la demande : systemd écoute sur 127.0.0.1:8022 (homelab-films.socket), lance le
+# conteneur à la première visite (site ou app) et l'arrête après 30 min sans activité.
+# Les films sont dans /srv/homelab/films (« Titre (Année)/Titre (Année).mp4 »), lus sans conversion (H.264 + AAC).
+name: jellyfin
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:12.4.20261026-211555
+    container_name: jellyfin
+    restart: "no"
+    user: "8096:8096"
+    ports: ["127.0.0.1:18022:8096"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    environment:
+      TZ: ${TZ}
+      JELLYFIN_PublishedServerUrl: https://films.${DOMAIN}
+    volumes:
+      - /srv/homelab/jellyfin/config:/config
+      - /srv/homelab/jellyfin/cache:/cache
+      - /srv/homelab/films:/media/films:ro

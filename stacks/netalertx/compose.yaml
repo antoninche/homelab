@@ -1,0 +1,21 @@
+# Inventaire du réseau local : découvre chaque appareil, suit sa présence, alerte (ntfy) sur un nouvel appareil.
+# Interface sur 127.0.0.1:20211 (reseau. via nginx), API GraphQL sur 127.0.0.1:20212 (jeton).
+name: netalertx
+services:
+  netalertx:
+    image: jokobsk/netalertx:26.10.0
+    container_name: netalertx
+    restart: unless-stopped
+    network_mode: host
+    # arp-scan tourne sous un utilisateur non-root avec des capacités de fichier : pas de no-new-privileges ici
+    cap_add: [NET_ADMIN, NET_RAW]
+    mem_limit: 384m
+    tmpfs: ["/tmp:uid=20211,gid=20211,mode=1700,rw,nosuid,nodev,noatime"]
+    environment:
+      TZ: ${TZ}
+      LISTEN_ADDR: 127.0.0.1
+      PORT: "20211"
+      GRAPHQL_PORT: "20212"
+    volumes:
+      - /srv/homelab/netalertx:/data
+      - /etc/localtime:/etc/localtime:ro

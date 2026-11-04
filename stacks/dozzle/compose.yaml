@@ -1,0 +1,20 @@
+name: dozzle
+services:
+  dozzle:
+    image: amir20/dozzle:v11.4.0
+    container_name: dozzle
+    restart: unless-stopped
+    ports: ["127.0.0.1:8007:8080"]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    environment:
+      DOCKER_HOST: tcp://socket-proxy:2375
+      DOZZLE_AUTH_PROVIDER: simple
+      DOZZLE_HOSTNAME: raspberrypi
+      DOZZLE_NO_ANALYTICS: "true"
+    volumes: [/srv/homelab/dozzle:/data:ro]
+    networks: [default, socket-proxy]
+
+networks:
+  socket-proxy: { external: true }

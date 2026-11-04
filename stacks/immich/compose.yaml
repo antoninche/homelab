@@ -1,0 +1,56 @@
+# Immich (photos) sans apprentissage automatique (trop lourd pour le Pi) ; base et cache sur un réseau interne.
+name: immich
+services:
+  server:
+    # version figée : Immich ne se met à jour qu'à la main, avec « homelab-immich » (notes de version lues avant)
+    image: ghcr.io/immich-app/immich-server:v3.3.5
+    container_name: immich
+    restart: unless-stopped
+    ports: ["127.0.0.1:8012:2283"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1536m
+    env_file: [/etc/homelab/secrets/immich.env]
+    environment:
+      TZ: ${TZ}
+      DB_HOSTNAME: database
+      DB_USERNAME: immich
+      DB_DATABASE_NAME: immich
+      REDIS_HOSTNAME: redis
+      IMMICH_MACHINE_LEARNING_ENABLED: "false"
+      IMMICH_TRUSTED_PROXIES: 172.16.0.0/12
+      IMMICH_TELEMETRY_INCLUDE: ""
+    volumes:
+      - /srv/homelab/immich/library:/data
+      # dossier Photos de Nextcloud, lu comme bibliothèque externe (lecture seule)
+      - /srv/homelab/nextcloud/data/admin/files/Photos:/mnt/nextcloud/Photos:ro
+      - /etc/localtime:/etc/localtime:ro
+    depends_on: [redis, database]
+    networks: [default, backend]
+  redis:
+    image: docker.io/valkey/valkey:9@sha256:c123e3715db63d06d4ad6964884037aa0d5d4d703939b9929954112889708e1d
+    container_name: immich-redis
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/data]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    healthcheck:
+      test: redis-cli ping | grep -q PONG || exit 1
+    networks: [backend]
+  database:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    container_name: immich-db
+    restart: unless-stopped
+    shm_size: 128mb
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    env_file: [/etc/homelab/secrets/immich.env]
+    environment:
+      POSTGRES_USER: immich
+      POSTGRES_DB: immich
+      POSTGRES_INITDB_ARGS: --data-checksums
+    volumes: [/srv/homelab/immich/db:/var/lib/postgresql/data]
+    networks: [backend]
+
+networks:
+  backend: { internal: true }

@@ -1,0 +1,138 @@
+{
+  "reseau": "192.168.8.0/24",
+  "lieu": "Appartement étudiant",
+  "routeur": {
+    "nom": "GL.iNet Opal",
+    "modele": "GL-SFT1200",
+    "firmware": "4.8.3",
+    "ip": "192.168.8.1",
+    "mode": "Répéteur du Wi-Fi de la résidence"
+  },
+  "dns": [
+    "Appareils",
+    "Routeur .1",
+    "AdGuard .11",
+    "Quad9 · Cloudflare (chiffré)"
+  ],
+  "plages": [
+    {
+      "de": 1,
+      "a": 1,
+      "role": "Routeur",
+      "couleur": "#40c8e0"
+    },
+    {
+      "de": 2,
+      "a": 9,
+      "role": "Infrastructure",
+      "couleur": "#64d2ff"
+    },
+    {
+      "de": 10,
+      "a": 19,
+      "role": "Serveurs",
+      "couleur": "#0a84ff"
+    },
+    {
+      "de": 20,
+      "a": 49,
+      "role": "Domotique",
+      "couleur": "#ff9f0a"
+    },
+    {
+      "de": 50,
+      "a": 69,
+      "role": "Multimédia",
+      "couleur": "#bf5af2"
+    },
+    {
+      "de": 70,
+      "a": 99,
+      "role": "Perso",
+      "couleur": "#ff375f"
+    },
+    {
+      "de": 100,
+      "a": 199,
+      "role": "DHCP automatique",
+      "couleur": "#8e8e93"
+    },
+    {
+      "de": 200,
+      "a": 254,
+      "role": "Libre",
+      "couleur": "#3a3a3c"
+    }
+  ],
+  "reservations": [
+    {
+      "ip": "192.168.8.1",
+      "nom": "Routeur GL.iNet",
+      "mac": "02:00:00:00:00:01",
+      "type": "Router"
+    },
+    {
+      "ip": "192.168.8.10",
+      "nom": "Raspberry Pi 5",
+      "mac": "02:00:00:00:00:02",
+      "type": "Server"
+    },
+    {
+      "ip": "192.168.8.11",
+      "nom": "VM Home Assistant · AdGuard",
+      "mac": "02:00:00:00:00:03",
+      "alias": [
+        "02:00:00:00:00:04"
+      ],
+      "type": "Server"
+    },
+    {
+      "ip": "192.168.8.20",
+      "nom": "Caméra Aqara G3",
+      "mac": "02:00:00:00:00:05",
+      "type": "Camera"
+    },
+    {
+      "ip": "192.168.8.21",
+      "nom": "Nest Hub (chambre)",
+      "mac": "02:00:00:00:00:06",
+      "type": "Domotic"
+    },
+    {
+      "ip": "192.168.8.22",
+      "nom": "Objet Tuya",
+      "mac": "02:00:00:00:00:07",
+      "type": "Domotic"
+    },
+    {
+      "ip": "192.168.8.23",
+      "nom": "Capteur de présence FP2",
+      "mac": "02:00:00:00:00:08",
+      "type": "Domotic"
+    },
+    {
+      "ip": "192.168.8.24",
+      "nom": "Prise Meross (lampe ronde)",
+      "mac": "02:00:00:00:00:09",
+      "type": "Domotic"
+    },
+    {
+      "ip": "192.168.8.70",
+      "nom": "Mac",
+      "mac": "02:00:00:00:00:0a",
+      "type": "Laptop"
+    },
+    {
+      "ip": "192.168.8.71",
+      "nom": "iPhone",
+      "mac": "02:00:00:00:00:0b",
+      "type": "Phone"
+    },
+    {
+      "ip": "192.168.8.72",
+      "nom": "Apple Watch",
+      "mac": "02:00:00:00:00:0c",
+      "type": "Smartwatch"
+    }
+  ]
+}

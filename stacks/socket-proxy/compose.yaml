@@ -1,0 +1,25 @@
+# Accès Docker en LECTURE SEULE pour Dozzle, Homepage, Glances et Uptime Kuma (au lieu du socket complet).
+name: socket-proxy
+services:
+  socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:3.4.7
+    container_name: socket-proxy
+    restart: unless-stopped
+    read_only: true
+    tmpfs: [/run]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    ports: ["127.0.0.1:2375:2375"]
+    environment:
+      CONTAINERS: "1"
+      EVENTS: "1"
+      IMAGES: "1"
+      INFO: "1"
+      PING: "1"
+      VERSION: "1"
+      POST: "0"
+    volumes: [/var/run/docker.sock:/var/run/docker.sock:ro]
+    networks: [default, socket-proxy]
+
+networks:
+  socket-proxy: { name: socket-proxy, internal: true }

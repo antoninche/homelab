@@ -1,0 +1,28 @@
+# Point d'entrée unique : HTTPS pour tous les services (les autres n'écoutent que sur 127.0.0.1).
+name: proxy
+services:
+  nginx:
+    image: nginx:1.31-alpine
+    container_name: proxy
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    tmpfs: [/var/cache/nginx, /var/run, /tmp]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE, CHOWN, SETUID, SETGID]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    environment:
+      NGINX_ENTRYPOINT_QUIET_LOGS: "1"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./snippets:/etc/nginx/snippets:ro
+      - ./conf.d:/etc/nginx/conf.d:ro
+      - ./site:/usr/share/nginx/site:ro
+      - /srv/homelab/cartes:/usr/share/nginx/cartes:ro   # carte de France (cartes.)
+      - /etc/homelab/lego/certificates:/etc/nginx/certs:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,43 @@
+# Généré par « homelab render » depuis /opt/homelab/homepage/config/ (@DOMAIN@ remplacé)
+title: Homelab
+description: Homelab · Raspberry Pi 5 · @DOMAIN@
+favicon: /images/icone.svg
+language: fr
+theme: dark
+color: slate
+# fond « verre » : base sombre et halos doux, comme les autres pages du homelab (homepage/images, gen-images.py)
+background:
+  image: /images/fond-verre.svg
+  brightness: 100
+  saturate: 100
+  opacity: 100
+cardBlur: xl
+headerStyle: boxedWidgets
+statusStyle: dot
+hideVersion: true
+useEqualHeights: true
+target: _blank
+layout:
+  Supervision:
+    style: row
+    columns: 4
+    icon: mdi-radar
+  Maison:
+    style: row
+    columns: 3
+    icon: mdi-home-heart
+  Applications:
+    style: row
+    columns: 3
+    icon: mdi-apps
+  Survie:
+    style: row
+    columns: 4
+    icon: mdi-campfire
+  Administration:
+    style: row
+    columns: 4
+    icon: mdi-shield-crown
+quicklaunch:
+  searchDescriptions: true
+  provider: duckduckgo

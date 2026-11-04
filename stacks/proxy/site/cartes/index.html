@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<title>Cartes</title>
+<!-- Cartes hors ligne du homelab : France entière (OpenStreetMap via Protomaps, fichier france.pmtiles lu par morceaux),
+     recherche de lieux (GeoNames) et polices servies par le Pi. Rien ne vient d'Internet. -->
+<link rel="stylesheet" href="lib/maplibre-gl.css">
+<style>
+  :root {
+    --fond: #0b1220; --verre: rgba(22, 30, 46, .62); --bord: rgba(255, 255, 255, .08); --reflet: rgba(255, 255, 255, .07);
+    --texte: #f2f5fa; --doux: rgba(235, 240, 248, .62); --accent: #40c8e0; --survol: rgba(255, 255, 255, .07);
+    --ombre: 0 10px 30px rgba(0, 0, 0, .35);
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --fond: #eef2f7; --verre: rgba(255, 255, 255, .7); --bord: rgba(0, 0, 0, .07); --reflet: rgba(255, 255, 255, .6);
+            --texte: #1c2433; --doux: rgba(28, 36, 51, .58); --accent: #30b0c7; --survol: rgba(0, 0, 0, .05);
+            --ombre: 0 10px 30px rgba(20, 30, 50, .14); }
+  }
+  html, body { margin: 0; height: 100%; background: var(--fond); color: var(--texte);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif; }
+  #carte { position: fixed; inset: 0; }
+  .verre { background: var(--verre); border: 1px solid var(--bord); box-shadow: var(--ombre), inset 0 1px 0 var(--reflet);
+    -webkit-backdrop-filter: blur(24px) saturate(170%); backdrop-filter: blur(24px) saturate(170%); }
+
+  /* recherche */
+  #recherche { position: fixed; z-index: 2; top: max(12px, env(safe-area-inset-top)); left: 12px; width: min(360px, calc(100vw - 24px));
+    border-radius: 22px; overflow: hidden; }
+  #recherche label { display: flex; align-items: center; gap: 8px; padding: 0 14px; height: 44px; }
+  #recherche svg { flex: none; opacity: .6; }
+  #q { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--texte); font: inherit; font-size: 16px; }
+  #q::placeholder { color: var(--doux); }
+  #resultats { list-style: none; margin: 0; padding: 0 6px 6px; max-height: 50vh; overflow-y: auto; }
+  #resultats:empty { display: none; }
+  #resultats li { display: flex; justify-content: space-between; gap: 10px; padding: 9px 10px; border-radius: 14px; cursor: pointer; }
+  #resultats li:hover, #resultats li[aria-selected="true"] { background: var(--survol); }
+  #resultats b { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #resultats small { color: var(--doux); white-space: nowrap; }
+  #resultats .vide { cursor: default; color: var(--doux); }
+
+  /* coordonnées du centre (viseur) */
+  #viseur { position: fixed; z-index: 1; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; pointer-events: none;
+    opacity: .55; color: var(--texte); }
+  #coord { position: fixed; z-index: 2; left: 50%; transform: translateX(-50%); bottom: max(12px, env(safe-area-inset-bottom));
+    border-radius: 999px; padding: 7px 14px; font-size: 13px; font-variant-numeric: tabular-nums; cursor: pointer; white-space: nowrap; }
+  #coord small { color: var(--doux); margin-left: 6px; }
+
+  /* contrôles MapLibre aux couleurs du homelab */
+  .maplibregl-ctrl-group { background: var(--verre) !important; border: 1px solid var(--bord); border-radius: 14px !important;
+    box-shadow: var(--ombre) !important; -webkit-backdrop-filter: blur(24px) saturate(170%); backdrop-filter: blur(24px) saturate(170%); overflow: hidden; }
+  .maplibregl-ctrl-group button + button { border-top: 1px solid var(--bord) !important; }
+  .maplibregl-ctrl-group button { width: 38px; height: 38px; }
+  @media (prefers-color-scheme: dark) { .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1); } }
+  .maplibregl-ctrl-top-right { top: max(0px, env(safe-area-inset-top)); }
+  .maplibregl-ctrl-scale { background: var(--verre); color: var(--texte); border-color: var(--doux); border-radius: 0 0 6px 6px; }
+  .maplibregl-ctrl-attrib { background: var(--verre) !important; color: var(--doux); border-radius: 10px 0 0 0; font-size: 11px; }
+  .maplibregl-ctrl-attrib a { color: var(--doux); }
+  .maplibregl-ctrl-bottom-left { bottom: 44px; }
+  @media (max-width: 560px) { .maplibregl-ctrl-top-right { top: 60px; } .maplibregl-ctrl-bottom-left { bottom: 52px; } }
+</style>
+</head>
+<body>
+<div id="carte" role="region" aria-label="Carte"></div>
+
+<div id="recherche" class="verre">
+  <label>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Ville, village, sommet, lac…" autocomplete="off" spellcheck="false" aria-label="Rechercher un lieu" aria-controls="resultats">
+  </label>
+  <ul id="resultats" role="listbox"></ul>
+</div>
+
+<svg id="viseur" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 1v5M9 12v5M1 9h5M12 9h5"/></svg>
+<div id="coord" class="verre" title="Copier les coordonnées du centre"></div>
+
+<script src="lib/pmtiles.js"></script>
+<script src="lib/basemaps.js"></script>
+<script type="module">
+import * as maplibregl from "./lib/maplibre-gl.mjs";
+
+const sombre = matchMedia("(prefers-color-scheme: dark)");
+const FRANCE = [[-6.5, 40.8], [10.5, 51.8]];
+
+// mémorise la dernière vue (confort de ce navigateur seulement ; la page marche sans)
+const memoire = {
+  lire() { try { return JSON.parse(localStorage.getItem("cartes.vue")); } catch { return null; } },
+  ecrire(v) { try { localStorage.setItem("cartes.vue", JSON.stringify(v)); } catch {} },
+};
+
+const protocole = new pmtiles.Protocol();
+maplibregl.addProtocol("pmtiles", protocole.tile);
+
+function style() {
+  const theme = sombre.matches ? "dark" : "light";
+  return {
+    version: 8,
+    glyphs: location.origin + "/polices/{fontstack}/{range}.pbf",
+    sprite: location.origin + "/sprites/v4/" + theme,
+    sources: { protomaps: { type: "vector", url: "pmtiles://" + location.origin + "/france.pmtiles",
+      attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://protomaps.com">Protomaps</a> · lieux <a href="https://www.geonames.org">GeoNames</a>' } },
+    layers: basemaps.layers("protomaps", basemaps.namedFlavor(theme), { lang: "fr" }),
+  };
+}
+
+const vue = memoire.lire();
+const carte = new maplibregl.Map({
+  container: "carte", style: style(), hash: "pos",
+  center: vue?.c ?? [2.6, 46.6], zoom: vue?.z ?? 5.2,
+  maxBounds: FRANCE, minZoom: 4, maxZoom: 19, attributionControl: { compact: true },
+});
+carte.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+carte.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), "top-right");
+carte.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
+sombre.addEventListener("change", () => carte.setStyle(style()));
+
+// coordonnées du centre, utiles pour se repérer ou les transmettre
+const coord = document.getElementById("coord");
+function majCoord() {
+  const c = carte.getCenter();
+  coord.innerHTML = `${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}<small>zoom ${carte.getZoom().toFixed(1)}</small>`;
+}
+carte.on("move", majCoord);
+carte.on("moveend", () => memoire.ecrire({ c: carte.getCenter().toArray(), z: carte.getZoom() }));
+majCoord();
+coord.addEventListener("click", async () => {
+  const c = carte.getCenter(), t = `${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}`;
+  try { await navigator.clipboard.writeText(t); coord.firstChild.textContent = "Copié : " + t; } catch {}
+});
+
+// recherche de lieux hors ligne : [nom, lat, lon, type, population, département], triés par population
+const TYPES = { v: "Commune", q: "Quartier", s: "Sommet", c: "Col", o: "Colline", i: "Île", l: "Lac", f: "Forêt" };
+const ZOOM = { v: 12, q: 14, s: 13, c: 13, o: 13, i: 11, l: 12, f: 11 };
+const sansAccents = (t) => t.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[-'’]/g, " ").toLowerCase();
+let lieux = null, chargement = null;
+function charger() {
+  chargement ??= fetch("lieux.json").then((r) => r.json()).then((l) => { lieux = l.map((x) => [sansAccents(x[0]), x]); });
+  return chargement;
+}
+const q = document.getElementById("q"), liste = document.getElementById("resultats");
+let trouves = [], choisi = -1;
+function chercher() {
+  const t = sansAccents(q.value.trim());
+  trouves = []; choisi = -1;
+  if (t.length >= 2 && lieux) {
+    const debut = [], dedans = [];
+    for (const [n, x] of lieux) {
+      if (n.startsWith(t)) { if (debut.push(x) >= 8) break; }
+      else if (dedans.length < 8 && n.includes(t)) dedans.push(x);
+    }
+    trouves = debut.concat(dedans).slice(0, 8);
+  }
+  liste.innerHTML = "";
+  for (const [i, [nom, , , type, pop, dep]] of trouves.entries()) {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    li.innerHTML = "<b></b><small></small>";
+    li.firstChild.textContent = nom;
+    li.lastChild.textContent = [TYPES[type], dep && `(${dep})`, pop > 0 && `${pop.toLocaleString("fr-FR")} hab.`].filter(Boolean).join(" ");
+    li.addEventListener("click", () => aller(i));
+    liste.append(li);
+  }
+  if (t.length >= 2 && lieux && !trouves.length) liste.innerHTML = '<li class="vide">Aucun lieu trouvé</li>';
+}
+function aller(i) {
+  const [nom, lat, lon, type] = trouves[i];
+  carte.flyTo({ center: [lon, lat], zoom: ZOOM[type] ?? 12, speed: 1.6 });
+  q.value = nom; liste.innerHTML = ""; q.blur();
+}
+q.addEventListener("focus", charger, { once: true });
+q.addEventListener("input", () => (lieux ? chercher() : charger().then(chercher)));
+q.addEventListener("keydown", (e) => {
+  if (!trouves.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    choisi = (choisi + (e.key === "ArrowDown" ? 1 : trouves.length - 1)) % trouves.length;
+    [...liste.children].forEach((li, i) => li.setAttribute("aria-selected", i === choisi));
+  } else if (e.key === "Enter") aller(Math.max(choisi, 0));
+  else if (e.key === "Escape") { liste.innerHTML = ""; q.blur(); }
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,90 @@
+# Nextcloud (Apache) + MariaDB + Redis + tâches de fond. Base et cache sur un réseau interne sans Internet.
+# En veille : rien ne démarre seul. homelab-cloud.socket écoute 127.0.0.1:8002 et démarre les quatre conteneurs
+# à la première visite de cloud. ; ils s'arrêtent après 30 min sans activité (comme Stirling-PDF).
+name: nextcloud
+x-nextcloud: &nextcloud
+  image: nextcloud:35-apache
+  restart: "no"
+  security_opt: ["no-new-privileges:true"]
+  volumes:
+    - /srv/homelab/nextcloud/html:/var/www/html
+    - /srv/homelab/nextcloud/data:/var/www/html/data
+    - ./php-homelab.ini:/usr/local/etc/php/conf.d/zz-homelab.ini:ro
+  secrets: [nc_db_password, nc_admin_password, nc_redis_password]
+  environment: &nc_env
+    TZ: ${TZ}
+    MYSQL_HOST: db
+    MYSQL_DATABASE: nextcloud
+    MYSQL_USER: nextcloud
+    MYSQL_PASSWORD_FILE: /run/secrets/nc_db_password
+    NEXTCLOUD_ADMIN_USER: admin
+    NEXTCLOUD_ADMIN_PASSWORD_FILE: /run/secrets/nc_admin_password
+    NEXTCLOUD_TRUSTED_DOMAINS: cloud.${DOMAIN}
+    TRUSTED_PROXIES: 172.16.0.0/12 127.0.0.1
+    OVERWRITEPROTOCOL: https
+    OVERWRITEHOST: cloud.${DOMAIN}
+    OVERWRITECLIURL: https://cloud.${DOMAIN}
+    REDIS_HOST: redis
+    REDIS_HOST_PASSWORD_FILE: /run/secrets/nc_redis_password
+    PHP_MEMORY_LIMIT: 1024M
+    PHP_UPLOAD_LIMIT: 10G
+  networks: [default, backend]
+
+services:
+  app:
+    <<: *nextcloud
+    container_name: nextcloud
+    ports: ["127.0.0.1:18002:80"]
+    mem_limit: 1g
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+  cron:
+    <<: *nextcloud
+    container_name: nextcloud-cron
+    entrypoint: /cron.sh
+    mem_limit: 512m
+    depends_on: [app]
+  db:
+    image: mariadb:11.8
+    container_name: nextcloud-db
+    restart: "no"
+    command: --transaction-isolation=READ-COMMITTED --slow-query-log=1 --long-query-time=2 --slow-query-log-file=/var/lib/mysql/slow.log
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    environment:
+      TZ: ${TZ}
+      MARIADB_DATABASE: nextcloud
+      MARIADB_USER: nextcloud
+      MARIADB_PASSWORD_FILE: /run/secrets/nc_db_password
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/nc_db_root_password
+      MARIADB_AUTO_UPGRADE: "1"
+    secrets: [nc_db_password, nc_db_root_password]
+    volumes: [/srv/homelab/nextcloud/db:/var/lib/mysql]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+  redis:
+    image: redis:8-alpine
+    container_name: nextcloud-redis
+    restart: "no"
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    read_only: true
+    tmpfs: [/data]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    volumes: [/etc/homelab/secrets/nc_redis.conf:/usr/local/etc/redis/redis.conf:ro]
+    networks: [backend]
+
+networks:
+  backend: { internal: true }
+
+secrets:
+  nc_db_password: { file: /etc/homelab/secrets/nc_db_password }
+  nc_db_root_password: { file: /etc/homelab/secrets/nc_db_root_password }
+  nc_admin_password: { file: /etc/homelab/secrets/nc_admin_password }
+  nc_redis_password: { file: /etc/homelab/secrets/nc_redis_password }

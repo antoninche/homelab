@@ -1,0 +1,29 @@
+# Notifications push. Accès refusé par défaut ; les iPhone reçoivent les alertes via le relais ntfy.sh (identifiants de message seulement).
+name: ntfy
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.35.0
+    container_name: ntfy
+    restart: unless-stopped
+    command: serve
+    ports: ["127.0.0.1:8011:80"]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    environment:
+      TZ: ${TZ}
+      NTFY_BASE_URL: https://ntfy.${DOMAIN}
+      NTFY_BEHIND_PROXY: "true"
+      NTFY_CACHE_FILE: /var/lib/ntfy/cache.db
+      NTFY_AUTH_FILE: /var/lib/ntfy/user.db
+      NTFY_AUTH_DEFAULT_ACCESS: deny-all
+      NTFY_ATTACHMENT_CACHE_DIR: /var/lib/ntfy/attachments
+      NTFY_ENABLE_LOGIN: "true"
+      NTFY_UPSTREAM_BASE_URL: https://ntfy.sh
+    volumes: [/srv/homelab/ntfy:/var/lib/ntfy]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/v1/health | grep -q true"]
+      interval: 60s
+      timeout: 10s
+      retries: 3

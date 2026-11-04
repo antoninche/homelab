@@ -1,0 +1,1025 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salle de contrôle</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%230b1220'/%3E%3Ccircle cx='32' cy='32' r='20' fill='none' stroke='%2340c8e0' stroke-width='3'/%3E%3Cpath d='M32 32 L46 18' stroke='%2340c8e0' stroke-width='4' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='32' r='4' fill='%2340c8e0'/%3E%3C/svg%3E">
+<style>
+/* Salle de contrôle du homelab : panneaux en verre dépoli façon Apple (« Liquid Glass » modéré) sur un fond à halos,
+   chiffres en chasse fixe. Mêmes jetons que la page d'accueil, la page de statut et le thème Home Assistant.
+   Aucune ressource externe, pour rester lisible même quand Internet tombe. */
+
+/* ---------- jetons ---------- */
+:root {
+  color-scheme: dark;
+  /* fond : base unie et quatre halos doux (teal, indigo, ciel, rose), fixes */
+  --wall: #0b1220;
+  --halos:
+    radial-gradient(circle 70vmax at 8% 0%, rgb(45 212 191 / 0.30), transparent 62%),
+    radial-gradient(circle 70vmax at 92% 4%, rgb(99 102 241 / 0.26), transparent 62%),
+    radial-gradient(circle 70vmax at 6% 100%, rgb(56 189 248 / 0.18), transparent 62%),
+    radial-gradient(circle 70vmax at 96% 96%, rgb(236 72 153 / 0.14), transparent 62%);
+  /* verre : surface translucide, bord dessiné par la lumière plutôt que par un trait */
+  --glass: rgb(255 255 255 / 0.06);
+  --glass-hover: rgb(255 255 255 / 0.08);
+  --glass-inner: rgb(255 255 255 / 0.05);
+  --edge: rgb(255 255 255 / 0.08);
+  --hairline: rgb(255 255 255 / 0.07);
+  --blur: blur(24px) saturate(170%);
+  --shadow: inset 0 1px 0 rgb(255 255 255 / 0.10), 0 10px 30px -12px rgb(0 0 0 / 0.55);
+  /* texte */
+  --text: #f2f5f9;
+  --text-2: rgb(235 235 245 / 0.60);
+  --text-3: rgb(235 235 245 / 0.30);
+  /* couleurs système Apple (mode sombre) ; le script les relit pour les graphiques et le radar */
+  --accent: #40c8e0;
+  --ok: #30d158;
+  --warn: #ff9f0a;
+  --bad: #ff453a;
+  --yellow: #ffd60a;
+  --blue: #0a84ff;
+  --indigo: #5e5ce6;
+  --purple: #bf5af2;
+  --pink: #ff375f;
+  --gray: #8e8e93;
+  /* typographie */
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", Inter, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* rayons concentriques : panneau, bloc intérieur, ligne de liste, capsule */
+  --r-panel: 22px;
+  --r-inner: 14px;
+  --r-row: 10px;
+  --r-pill: 999px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--wall);
+  color: var(--text);
+  font: 400 14px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+  padding: 20px max(20px, env(safe-area-inset-right)) 24px max(20px, env(safe-area-inset-left));
+}
+/* calque fixe plutôt que background-attachment: fixed, ignoré par Safari sur iPhone */
+body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: var(--halos), var(--wall); pointer-events: none; }
+.num { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); }
+
+/* surface en verre : panneaux, pastille d'état, lien vers la documentation */
+.p, .state, .lien-doc {
+  background: var(--glass);
+  border: 1px solid var(--edge);
+  box-shadow: var(--shadow);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+
+/* ---------- en-tête ---------- */
+header { display: flex; align-items: center; gap: 14px 18px; flex-wrap: wrap; margin-bottom: 18px; }
+.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.brand svg { width: 44px; height: 44px; flex: none; }
+.brand h1 { margin: 0; font-size: 30px; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em; }
+.brand small { display: block; margin-top: 3px; color: var(--text-2); font-size: 13px; }
+.state { margin-left: auto; display: inline-flex; align-items: center; gap: 9px; padding: 9px 16px; border-radius: var(--r-pill); font-size: 13px; font-weight: 600; }
+.state i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgb(48 209 88 / 0.22); }
+.state.alert { background: rgb(255 69 58 / 0.18); color: #ffd4d1; }
+.state.alert i { background: var(--bad); box-shadow: 0 0 0 3px rgb(255 69 58 / 0.25); animation: pulse 1.2s infinite; }
+.lien-doc { display: inline-flex; align-items: center; padding: 9px 16px; border-radius: var(--r-pill); color: var(--text); font-size: 13px; font-weight: 600; text-decoration: none; }
+.lien-doc:hover { color: var(--accent); }
+.clock { font-size: 28px; line-height: 1; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; text-align: right; }
+.clock small { display: block; margin-top: 5px; color: var(--text-2); font-size: 12px; font-weight: 500; letter-spacing: 0; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+/* ---------- grille de panneaux ---------- */
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.p { border-radius: var(--r-panel); padding: 16px 18px; min-width: 0; position: relative; overflow: hidden; }
+.p h2 { margin: 0 0 12px; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 15px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; }
+.p h2 span { color: var(--text-2); font-size: 12px; font-weight: 500; letter-spacing: 0; text-align: right; }
+.c3 { grid-column: span 3; } .c4 { grid-column: span 4; } .c5 { grid-column: span 5; } .c6 { grid-column: span 6; }
+.c7 { grid-column: span 7; } .c8 { grid-column: span 8; } .c12 { grid-column: span 12; }
+@media (max-width: 1200px) { .c3 { grid-column: span 6; } .c4, .c5 { grid-column: span 6; } .c7, .c8 { grid-column: span 12; } #p-cores { grid-column: span 12; } }
+/* téléphone : tableaux lisibles sans défilement horizontal (MAC masquées, textes sur plusieurs lignes) */
+@media (max-width: 720px) { th.mac, td.mac { display: none; } #plan td + td { white-space: normal; } td.why { min-width: 0; } td .bar { width: 56px; } .devs li span { white-space: normal; } }
+@media (max-width: 720px) {
+  body { padding: 16px max(16px, env(safe-area-inset-right)) 20px max(16px, env(safe-area-inset-left)); }
+  .c3, .c4, .c5, .c6, .c7, .c8 { grid-column: span 12; }
+  .grid { gap: 12px; }
+  .brand h1 { font-size: 26px; }
+  .state { margin-left: 0; }
+  .clock { margin-left: auto; font-size: 24px; }
+}
+
+/* ---------- mesures vitales ---------- */
+.vital .big { font-size: 36px; line-height: 1; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.vital .big small { margin-left: 3px; color: var(--text-2); font-size: 15px; font-weight: 600; letter-spacing: 0; }
+.vital .sub { margin-top: 8px; display: flex; justify-content: space-between; gap: 8px; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.vital canvas { width: 100%; height: 56px; display: block; margin-top: 12px; }
+.vital.warn .big { color: var(--warn); } .vital.bad .big { color: var(--bad); }
+
+/* ---------- cœurs et barres ---------- */
+.cores { display: grid; gap: 10px; }
+.core { display: grid; grid-template-columns: 56px 1fr 48px; gap: 10px; align-items: center; color: var(--text-2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.bar { height: 6px; border-radius: var(--r-pill); background: rgb(255 255 255 / 0.10); overflow: hidden; }
+.bar > i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.6s ease; }
+.bar.w > i { background: var(--warn); } .bar.b > i { background: var(--bad); }
+.kv { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; margin-top: 14px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.kv dt { color: var(--text-2); } .kv dd { margin: 0; text-align: right; }
+
+/* ---------- services (sondes Uptime Kuma) ---------- */
+.groups { display: grid; gap: 14px; }
+.grp b { display: block; margin-bottom: 7px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.dots { display: flex; flex-wrap: wrap; gap: 6px; }
+.svc { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px 5px 9px; border-radius: var(--r-pill); background: var(--glass-inner); color: var(--text); font-size: 12.5px; font-weight: 500; }
+.svc i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
+.svc.down { background: rgb(255 69 58 / 0.18); } .svc.down i { background: var(--bad); animation: pulse 1s infinite; }
+.svc.pend i { background: var(--warn); }
+.svc em { color: var(--text-2); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; }
+
+/* ---------- radar et listes d'appareils ---------- */
+.radar-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 720px) { .radar-wrap { grid-template-columns: 1fr; } }
+#radar { width: 100%; aspect-ratio: 1; max-width: 100%; display: block; }
+.devs { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 330px; overflow: auto; font-size: 12.5px; }
+.devs li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 5px 8px; border-radius: var(--r-row); }
+.devs li:hover { background: var(--glass-inner); }
+.devs li i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.devs li.off i { background: var(--text-3); } .devs li.new i { background: var(--warn); }
+.devs li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.devs li small { color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+/* ---------- tableaux ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th { text-align: left; padding: 0 8px 8px; border-bottom: 1px solid var(--hairline); color: var(--text-2); font-size: 11.5px; font-weight: 600; }
+td { padding: 6px 8px; border-bottom: 1px solid var(--hairline); white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+td.n { text-align: right; } td .bar { width: 90px; display: inline-block; vertical-align: middle; }
+td.mac { color: var(--text-2); font-family: var(--mono); font-size: 11.5px; }
+td.why { color: var(--text-2); white-space: normal; min-width: 180px; }
+.st { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px; background: var(--ok); }
+.st.bad { background: var(--bad); } .st.mid { background: var(--warn); } .st.veille { background: var(--text-3); }
+.veille-t { color: var(--text-2); font-style: normal; }
+.scroll { max-height: 330px; overflow: auto; }
+
+/* ---------- tuiles chiffres ---------- */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.tile { padding: 10px 12px; border-radius: var(--r-inner); background: var(--glass-inner); }
+.tile b { display: block; font-size: 20px; line-height: 1.15; font-weight: 700; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.tile span { display: block; margin-top: 3px; color: var(--text-2); font-size: 11.5px; line-height: 1.3; }
+.tile.ok b { color: var(--ok); } .tile.warn b { color: var(--warn); } .tile.bad b { color: var(--bad); }
+
+/* ---------- liaison : Internet → résidence → routeur → Pi, puis chaîne DNS ---------- */
+.chain { display: grid; }
+.hop { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 9px 12px; border-radius: var(--r-inner); background: var(--glass-inner); font-size: 12.5px; }
+.hop b { font-weight: 600; white-space: nowrap; }
+.hop span { color: var(--text-2); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hop.me { background: rgb(64 200 224 / 0.14); box-shadow: inset 0 0 0 1px rgb(64 200 224 / 0.28); }
+.link { position: relative; height: 26px; margin-left: 20px; padding-left: 14px; border-left: 2px solid rgb(255 255 255 / 0.10); display: flex; align-items: center; color: var(--accent); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.link::after { content: ""; position: absolute; left: -4px; top: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: flow 1.8s linear infinite; }
+.link.bad { color: var(--bad); border-left-color: rgb(255 69 58 / 0.5); } .link.bad::after { background: var(--bad); }
+@keyframes flow { from { top: 0; opacity: 1; } to { top: 20px; opacity: 0.2; } }
+.dnsflow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 14px; color: var(--text-3); font-size: 11.5px; }
+.dnsflow span { padding: 4px 10px; border-radius: var(--r-pill); background: var(--glass-inner); color: var(--text); }
+.dnsflow em { font-style: normal; }
+.ok-t { color: var(--ok); } .bad-t { color: var(--bad); } .warn-t { color: var(--warn); }
+
+/* ---------- plan d'adressage ---------- */
+.band { margin: 2px 0 10px; }
+.band .ticks { position: relative; height: 16px; }
+.band .ticks b { position: absolute; bottom: 2px; width: 3px; height: 12px; margin-left: -1px; border-radius: 2px; background: var(--ok); }
+.band .ticks b.off { background: var(--text-3); } .band .ticks b.new { background: var(--warn); } .band .ticks b.bad { background: var(--bad); }
+.band .segs { position: relative; height: 10px; border-radius: var(--r-pill); overflow: hidden; background: rgb(255 255 255 / 0.06); }
+.band .segs i { position: absolute; top: 0; bottom: 0; opacity: 0.75; border-right: 2px solid rgb(11 18 32 / 0.6); }
+.band .scale { position: relative; height: 16px; color: var(--text-2); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.band .scale span { position: absolute; top: 4px; transform: translateX(-50%); }
+/* sur téléphone, .10 et .20 se chevauchent avec .1 : on ne garde que les repères espacés */
+@media (max-width: 720px) { .band .scale span:nth-child(2), .band .scale span:nth-child(3) { display: none; } }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 12px; font-size: 12px; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.legend em { color: var(--text-2); font-style: normal; }
+.via { padding: 2px 7px; border-radius: var(--r-pill); background: var(--glass-inner); color: var(--text-2); font-size: 10px; font-weight: 600; letter-spacing: 0.04em; }
+
+/* ---------- schéma du homelab : de l'accès jusqu'au disque, un voyant par brique ----------
+   Grand écran : accès | Raspberry Pi | automatismes, reliés par des câbles (SVG dessiné par le script).
+   Plus étroit : les trois blocs s'empilent ; sur téléphone, plus de câbles entre eux. */
+.sch { position: relative; display: grid; gap: 30px 44px; grid-template-columns: 210px minmax(0, 1fr) 230px; grid-template-areas: "acces pi auto"; align-items: start; }
+@media (max-width: 1399px) { .sch { grid-template-columns: minmax(0, 1fr); grid-template-areas: "acces" "pi" "auto"; } }
+.wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.sch-col, .pi { position: relative; z-index: 1; min-width: 0; } /* au-dessus des câbles */
+.sch-col { display: grid; gap: 10px; align-content: start; }
+#z-acces { grid-area: acces; } .pi { grid-area: pi; } #z-auto { grid-area: auto; }
+.cartes { display: grid; gap: 8px; }
+@media (max-width: 1399px) {
+  #z-acces .cartes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  #z-auto .cartes { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .sch-note { grid-column: 1 / -1; }
+}
+@media (max-width: 899px) { #z-acces .cartes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 399px) { #z-acces .cartes, #z-auto .cartes { grid-template-columns: minmax(0, 1fr); } }
+.cap { color: var(--text-2); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.sch-note { margin: 4px 0 -2px; color: var(--text-2); font-size: 11.5px; }
+
+/* brique : voyant, nom et détail, valeur à droite ; un lien quand le service a une page */
+.nd { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 0 10px; align-items: center; padding: 8px 11px; border-radius: var(--r-inner); background: var(--glass-inner); color: inherit; text-decoration: none; border: 1px solid transparent; transition: background-color 160ms ease, transform 160ms ease, border-color 160ms ease; }
+a.nd:hover { background: var(--glass-hover); transform: translateY(-1px); }
+a.nd:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nd.on { border-color: rgb(64 200 224 / 0.45); }
+.nd > span { min-width: 0; display: grid; }
+.nd b, .nd small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nd b { font-size: 13px; font-weight: 600; }
+.nd small { color: var(--text-2); font-size: 11.5px; }
+.nd em { display: grid; justify-items: end; gap: 4px; color: var(--text-2); font-size: 11.5px; font-style: normal; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nd em .bar { width: 44px; height: 4px; }
+.nd.mini { padding: 6px 10px; background: rgb(255 255 255 / 0.035); }
+.nd.mini b { font-size: 12.5px; font-weight: 500; }
+.nd.fort { background: rgb(64 200 224 / 0.12); box-shadow: inset 0 0 0 1px rgb(64 200 224 / 0.25); }
+.nd.mini em .bar { display: none; }
+.nd em .q { color: var(--accent); font-family: var(--mono); font-size: 11px; }
+
+/* voyants : vert qui respire, orange, rouge qui clignote, gris éteint (veille), cercle vide (pas de mesure) */
+.led { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-3); }
+.led.ok { background: var(--ok); box-shadow: 0 0 0 3px rgb(48 209 88 / 0.14), 0 0 10px 1px rgb(48 209 88 / 0.55); animation: respire 3.2s ease-in-out infinite; }
+.led.pend { background: var(--warn); box-shadow: 0 0 0 3px rgb(255 159 10 / 0.16), 0 0 10px rgb(255 159 10 / 0.5); }
+.led.bad { background: var(--bad); box-shadow: 0 0 0 3px rgb(255 69 58 / 0.22), 0 0 12px rgb(255 69 58 / 0.75); animation: pulse 1s infinite; }
+.led.veille { background: var(--text-3); box-shadow: none; }
+@keyframes respire { 50% { box-shadow: 0 0 0 3px rgb(48 209 88 / 0.08), 0 0 4px rgb(48 209 88 / 0.3); } }
+
+/* châssis du Pi */
+.pi { display: grid; gap: 14px; padding: 16px; border-radius: 18px; background: rgb(255 255 255 / 0.025); border: 1px solid var(--edge); container-type: inline-size; }
+.pi-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.pi-h b { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+.pi-h > span { color: var(--text-2); font-size: 12px; }
+.chips { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+.chips span { padding: 3px 9px; border-radius: var(--r-pill); background: var(--glass-inner); color: var(--text-2); font-size: 11px; font-weight: 600; }
+#n-nginx { justify-self: center; width: min(100%, 340px); }
+.sgrps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+@container (min-width: 1000px) { .sgrps { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+.sgrp { display: grid; gap: 6px; align-content: start; }
+.sgrp > b { justify-self: center; display: inline-flex; align-items: center; gap: 7px; margin-bottom: 2px; color: var(--text-2); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+.sgrp > b i { width: 7px; height: 7px; border-radius: 50%; background: var(--g); }
+.blocs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.bloc { display: grid; gap: 6px; align-content: start; padding: 12px; border-radius: var(--r-inner); background: var(--glass-inner); border: 1px solid transparent; transition: border-color 160ms ease, box-shadow 160ms ease; }
+.bloc.on { border-color: rgb(64 200 224 / 0.55); box-shadow: 0 0 0 3px rgb(64 200 224 / 0.12); }
+.bloc h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.bloc h3 a { color: inherit; text-decoration: none; } .bloc h3 a:hover { color: var(--accent); }
+.bloc p { margin: 0 0 4px; color: var(--text-2); font-size: 11.5px; }
+.disque { display: grid; gap: 6px; }
+.disque .bar { height: 8px; }
+.disque > div:not(.bar) { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; color: var(--text-2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.disque > div b { color: var(--text); font-size: 12.5px; font-weight: 600; }
+@container (max-width: 759px) { .sgrps { grid-template-columns: repeat(2, minmax(0, 1fr)); } .blocs { grid-template-columns: minmax(0, 1fr); } }
+@container (max-width: 379px) { .sgrps { grid-template-columns: minmax(0, 1fr); } }
+
+/* câbles : trait discret, points qui circulent quand la liaison fonctionne, rouge pointillé quand elle est coupée */
+.wires .fil { fill: none; stroke: var(--c); stroke-opacity: 0.3; stroke-width: 1.5; }
+.wires .fil.bad { stroke: var(--bad); stroke-opacity: 0.75; stroke-dasharray: 5 4; }
+.wires .fil.veille, .wires .fil.inconnu { stroke: rgb(255 255 255 / 0.12); stroke-opacity: 1; }
+.wires .flux { fill: none; stroke: var(--c); stroke-width: 2.6; stroke-linecap: round; stroke-dasharray: 0.1 11; animation: flux 1.1s linear infinite; }
+.wires .flux.pend { animation-duration: 2.8s; }
+.wires .bout { fill: var(--c); }
+.wires .bout.bad { fill: var(--bad); }
+.wires .x { stroke: var(--bad); stroke-width: 2.2; stroke-linecap: round; }
+@keyframes flux { to { stroke-dashoffset: -11.1; } }
+.sch-pied { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 18px; margin-top: 14px; color: var(--text-2); font-size: 12px; }
+.sch-pied p { margin: 0; min-height: 1.45em; }
+.sch-pied p b { color: var(--text); font-weight: 600; }
+.sch-leg { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.sch-leg span { display: inline-flex; align-items: center; gap: 6px; }
+.sch-leg .led { animation: none; }
+.sch-leg u { display: inline-block; width: 18px; height: 0; border-top: 2px dotted var(--c); text-decoration: none; }
+
+/* ---------- journal ---------- */
+.feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; max-height: 170px; overflow: auto; font-size: 12.5px; }
+.feed li { display: grid; grid-template-columns: 72px 16px 1fr; gap: 6px; }
+.feed time { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.feed .k-ok { color: var(--ok); } .feed .k-bad { color: var(--bad); } .feed .k-warn { color: var(--warn); } .feed .k-info { color: var(--blue); }
+.err { color: var(--warn); font-size: 12px; }
+footer { margin-top: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; color: var(--text-2); font-size: 11.5px; }
+
+/* ---------- accessibilité ---------- */
+@media (prefers-reduced-transparency: reduce) {
+  .p, .state { background: #161e2e; backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#ffffff" fill-opacity=".08"/><circle cx="32" cy="32" r="21" fill="none" stroke="#ffffff" stroke-opacity=".22" stroke-width="2"/><circle cx="32" cy="32" r="12" fill="none" stroke="#ffffff" stroke-opacity=".22" stroke-width="2"/><path d="M32 32 L46 18" stroke="#40c8e0" stroke-width="3.5" stroke-linecap="round"/><circle cx="32" cy="32" r="3.5" fill="#40c8e0"/></svg>
+    <div><h1>Salle de contrôle</h1><small>Raspberry Pi 5 · 192.168.8.0/24</small></div>
+  </div>
+  <div class="state" id="state"><i></i><span>Connexion…</span></div>
+  <a class="lien-doc" id="lien-doc" href="#">Documentation</a>
+  <div class="clock" id="clock">--:--:--<small id="date">—</small></div>
+</header>
+
+<main class="grid">
+  <section class="p vital c3" id="v-cpu"><h2>Processeur <span id="cpu-load">charge —</span></h2><div class="big" id="cpu">—<small>%</small></div><div class="sub"><span id="cpu-freq">— GHz</span><span>4 cœurs Cortex-A76</span></div><canvas id="g-cpu"></canvas></section>
+  <section class="p vital c3" id="v-mem"><h2>Mémoire <span id="mem-swap">swap —</span></h2><div class="big" id="mem">—<small>%</small></div><div class="sub"><span id="mem-abs">— / — Go</span><span id="mem-free">— libres</span></div><canvas id="g-mem"></canvas></section>
+  <section class="p vital c3" id="v-temp"><h2>Température <span id="fan">ventilateur —</span></h2><div class="big" id="temp">—<small>°C</small></div><div class="sub"><span id="temp-nvme">NVMe — °C</span><span>bridage à 85 °C</span></div><canvas id="g-temp"></canvas></section>
+  <section class="p vital c3" id="v-net"><h2>Réseau <span id="net-if">eth0</span></h2><div class="big" id="net-down">—<small>Mb/s ↓</small></div><div class="sub"><span id="net-up">— Mb/s ↑</span><span id="net-ts">Tailscale — kb/s</span></div><canvas id="g-net"></canvas></section>
+
+  <section class="p c12" id="p-schema"><h2>Schéma du homelab <span id="sch-sum">—</span></h2>
+    <div class="sch" id="sch"><svg class="wires" id="wires" aria-hidden="true"></svg></div>
+    <div class="sch-pied"><p id="sch-info"></p>
+      <div class="sch-leg"><span><i class="led ok"></i>en ligne</span><span><i class="led pend"></i>en attente</span><span><i class="led bad"></i>en panne</span><span><i class="led veille"></i>en veille</span><span><i class="led"></i>pas de mesure</span>
+        <span><u style="--c:var(--accent)"></u>Tailscale</span><span><u style="--c:var(--blue)"></u>réseau local</span><span><u style="--c:var(--purple)"></u>objets connectés</span></div></div></section>
+
+  <section class="p c4" id="p-cores"><h2>Cœurs <span id="uptime">en ligne depuis —</span></h2><div class="cores" id="cores"></div>
+    <dl class="kv"><dt>Charge 1 / 5 / 15 min</dt><dd id="load">—</dd><dt>Disque NVMe</dt><dd id="disk">—</dd><dt>Conteneurs</dt><dd id="ctr-count">—</dd><dt>Bridage</dt><dd id="throttle">—</dd></dl></section>
+  <section class="p c8"><h2>Services <span id="svc-sum">—</span></h2><div class="groups" id="services"><p class="err">Chargement des sondes Uptime Kuma…</p></div></section>
+
+  <section class="p c7"><h2>Réseau local <span id="dev-sum">—</span></h2>
+    <div class="radar-wrap"><canvas id="radar" width="440" height="440" role="img" aria-label="Radar des appareils du réseau local"></canvas><ul class="devs" id="devs"></ul></div></section>
+  <section class="p c5"><h2>Conteneurs <span>tri par mémoire</span></h2><div class="scroll"><table><thead><tr><th>Nom</th><th>CPU</th><th>Mémoire</th><th></th></tr></thead><tbody id="ctrs"></tbody></table></div></section>
+
+  <section class="p c4"><h2>Liaison <span id="wan-sum">—</span></h2><div class="chain" id="chain"></div>
+    <div class="dnsflow" id="dnsflow"></div><dl class="kv" id="dnschk"></dl></section>
+  <section class="p c8"><h2>Plan d'adressage <span id="plan-sum">—</span></h2><div class="band" id="band"></div><div class="legend" id="legend"></div>
+    <div class="scroll"><table><thead><tr><th>IP</th><th>Appareil</th><th class="mac">MAC</th><th>État</th></tr></thead><tbody id="plan"></tbody></table></div></section>
+
+  <section class="p c3"><h2>Sécurité <span>pare-feu · DNS · audit</span></h2><div class="tiles" id="sec"></div></section>
+  <section class="p c3"><h2>Stockage <span id="nvme-model">NVMe</span></h2><div class="tiles" id="sto"></div></section>
+  <section class="p c3"><h2>Tailscale <span id="ts-ip">—</span></h2><ul class="devs" id="ts"></ul><dl class="kv" id="tasks"></dl></section>
+  <section class="p c3"><h2>Domotique <span id="dom-sum">—</span></h2><div class="tiles" id="dom"></div><div class="dots" id="dom-devs" style="margin-top:10px"></div></section>
+
+  <section class="p c12"><h2>Journal <span>événements détectés depuis l'ouverture de cette page</span></h2><ul class="feed" id="feed"></ul></section>
+</main>
+<footer><span>Sources : Glances (2 s) · Uptime Kuma (30 s) · NetAlertX (60 s) · hôte et Home Assistant (60 s) · plan.json</span><span id="last">—</span></footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d = 0) => Number(n).toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d });
+const GiB = 1024 ** 3;
+const HIST = 90; // 3 minutes de mesures toutes les 2 s
+const hist = { cpu: [], mem: [], temp: [], down: [], up: [] };
+const push = (k, v) => { hist[k].push(v); if (hist[k].length > HIST) hist[k].shift(); };
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+// palette relue dans les jetons CSS (:root) : une seule source de couleurs pour la page, les graphiques et le radar
+const css = getComputedStyle(document.documentElement);
+const COL = Object.fromEntries(["accent", "ok", "warn", "bad", "blue", "indigo", "purple", "pink", "gray"].map((k) => [k, css.getPropertyValue("--" + k).trim()]));
+const rgba = (hex, a) => { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
+
+async function get(path) {
+  // adresse absolue depuis l'origine (sans identifiants), même si la page a été ouverte avec admin:…@
+  const r = await fetch(location.origin + path, { cache: "no-store", credentials: "same-origin" });
+  if (!r.ok) throw new Error(path + " → " + r.status);
+  return r.json();
+}
+
+/* ---------- journal d'événements ---------- */
+const feedEl = $("feed");
+function log(kind, text) {
+  const li = document.createElement("li");
+  const t = new Date().toLocaleTimeString("fr-FR");
+  const sym = { ok: "●", bad: "▲", warn: "◆", info: "›" }[kind];
+  li.innerHTML = `<time>${t}</time><span class="k-${kind}">${sym}</span><span></span>`;
+  li.lastChild.textContent = text;
+  feedEl.prepend(li);
+  while (feedEl.children.length > 60) feedEl.lastChild.remove();
+}
+
+/* ---------- horloge ---------- */
+function tick() {
+  const d = new Date();
+  $("clock").firstChild.nodeValue = d.toLocaleTimeString("fr-FR");
+  const jour = d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+  $("date").textContent = jour.charAt(0).toUpperCase() + jour.slice(1);
+}
+setInterval(tick, 1000); tick();
+
+/* ---------- graphiques courts (canvas) ---------- */
+function spark(id, series, max) {
+  const c = $(id), dpr = devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+  g.strokeStyle = "rgba(255,255,255,.08)"; g.lineWidth = 1;
+  for (const f of [0.5]) { g.beginPath(); g.moveTo(0, h * f); g.lineTo(w, h * f); g.stroke(); }
+  series.forEach(({ data, color }) => {
+    if (data.length < 2) return;
+    const m = max || Math.max(1, ...data) * 1.15;
+    const x = (i) => (i / (HIST - 1)) * w, y = (v) => h - 2 - (Math.min(v, m) / m) * (h - 6);
+    const off = HIST - data.length;
+    g.beginPath(); data.forEach((v, i) => (i ? g.lineTo : g.moveTo).call(g, x(i + off), y(v)));
+    g.strokeStyle = color; g.lineWidth = 2; g.lineJoin = "round"; g.stroke();
+    g.lineTo(x(HIST - 1), h); g.lineTo(x(off), h); g.closePath();
+    const grad = g.createLinearGradient(0, 0, 0, h); grad.addColorStop(0, color + "55"); grad.addColorStop(1, color + "00");
+    g.fillStyle = grad; g.fill();
+    const lv = data[data.length - 1]; g.beginPath(); g.arc(x(HIST - 1) - 3, y(lv), 3, 0, 7); g.fillStyle = color; g.fill();
+  });
+}
+const level = (el, v, warn, bad) => { el.classList.toggle("warn", v >= warn && v < bad); el.classList.toggle("bad", v >= bad); };
+const barCls = (v, w, b) => (v >= b ? "b" : v >= w ? "w" : "");
+
+/* ---------- Glances : toutes les 2 s ---------- */
+let prevCores = "";
+async function vitals() {
+  const [cpu, mem, swap, load, sensors, net, percpu, ql] = await Promise.all(
+    ["cpu", "mem", "memswap", "load", "sensors", "network", "percpu", "quicklook"].map((p) => get("/api/4/" + p)));
+  // Glances renvoie parfois un échantillon vide (total 100 %, inactivité et utilisateur à 0) : on garde la valeur précédente
+  const valid = (x) => (x.idle || 0) > 0 || (x.user || 0) + (x.system || 0) >= 50;
+  const c = valid(cpu) ? cpu.total : (hist.cpu[hist.cpu.length - 1] ?? 0); push("cpu", c);
+  $("cpu").firstChild.nodeValue = fmt(c); level($("v-cpu"), c, 70, 90);
+  $("cpu-freq").textContent = fmt((ql.cpu_hz_current || 0) / 1e9, 1) + " GHz";
+  $("cpu-load").textContent = "charge " + fmt(load.min1, 2);
+  $("load").textContent = [load.min1, load.min5, load.min15].map((v) => fmt(v, 2)).join(" / ");
+  push("mem", mem.percent);
+  $("mem").firstChild.nodeValue = fmt(mem.percent); level($("v-mem"), mem.percent, 85, 95);
+  $("mem-abs").textContent = `${fmt(mem.used / GiB, 1)} / ${fmt(mem.total / GiB, 1)} Go`;
+  $("mem-free").textContent = fmt(mem.available / GiB, 1) + " Go dispo";
+  $("mem-swap").textContent = `swap ${fmt(swap.used / GiB, 1)} Go`;
+  const s = (re) => sensors.find((x) => re.test(x.label));
+  const tc = s(/cpu_thermal/)?.value ?? 0, tn = s(/Composite/)?.value, fan = s(/pwmfan/)?.value;
+  push("temp", tc);
+  $("temp").firstChild.nodeValue = fmt(tc); level($("v-temp"), tc, 70, 80);
+  $("temp-nvme").textContent = `NVMe ${tn ?? "—"} °C`;
+  $("fan").textContent = fan != null ? `ventilateur ${fmt(fan)} tr/min` : "ventilateur —";
+  const eth = net.find((n) => n.interface_name === "eth0") || {}, ts = net.find((n) => n.interface_name === "tailscale0") || {};
+  const down = (eth.bytes_recv_rate_per_sec || 0) * 8 / 1e6, up = (eth.bytes_sent_rate_per_sec || 0) * 8 / 1e6;
+  push("down", down); push("up", up);
+  $("net-down").firstChild.nodeValue = fmt(down, down < 10 ? 2 : 1);
+  $("net-up").textContent = fmt(up, up < 10 ? 2 : 1) + " Mb/s ↑";
+  $("net-ts").textContent = "Tailscale " + fmt(((ts.bytes_all_rate_per_sec || 0) * 8) / 1e3, 0) + " kb/s";
+  spark("g-cpu", [{ data: hist.cpu, color: COL.accent }], 100);
+  spark("g-mem", [{ data: hist.mem, color: COL.indigo }], 100);
+  spark("g-temp", [{ data: hist.temp, color: COL.warn }], 90);
+  spark("g-net", [{ data: hist.down, color: COL.accent }, { data: hist.up, color: COL.pink }]);
+  if (!percpu.every(valid)) return;
+  const cores = percpu.map((p) => Math.round(p.total));
+  const html = cores.map((v, i) => `<div class="core"><span>cœur ${i}</span><div class="bar ${barCls(v, 70, 90)}"><i style="width:${v}%"></i></div><span class="num" style="text-align:right">${v} %</span></div>`).join("");
+  if (html !== prevCores) { $("cores").innerHTML = html; prevCores = html; }
+}
+
+/* ---------- Glances : conteneurs et disque, toutes les 5 s ---------- */
+const ctrState = {};
+const SOMMEIL = ["stirling-pdf", "nextcloud", "nextcloud-db", "nextcloud-redis", "nextcloud-cron", "kiwix", "ia", "jellyfin"]; // démarrés à la demande : arrêtés = en veille
+const arrete = (c) => c.uptime == null || /exited|created|dead/i.test(c.status || "");
+const dort = (c) => SOMMEIL.includes(c.name) && arrete(c);
+async function containers() {
+  const [list, fs, up] = await Promise.all([get("/api/4/containers"), get("/api/4/fs"), get("/api/4/uptime")]);
+  list.sort((a, b) => (b.memory_usage || 0) - (a.memory_usage || 0));
+  const run = list.filter((c) => !arrete(c)).length;
+  $("ctr-count").textContent = `${run} / ${list.length} actifs`;
+  $("ctrs").innerHTML = list.map((c) => {
+    const mb = (c.memory_usage || 0) / 1048576, lim = (c.memory_limit || 0) / 1048576, pct = lim ? (mb / lim) * 100 : 0;
+    const st = dort(c) ? "veille" : /unhealthy|exited|dead/i.test(c.status) ? "bad" : /starting|restarting|paused/i.test(c.status) ? "mid" : "";
+    return `<tr><td><span class="st ${st}"></span>${c.name}${dort(c) ? ' <em class="veille-t">veille</em>' : ""}</td><td class="n">${fmt(c.cpu_percent || 0, 1)} %</td><td class="n">${fmt(mb)} Mo</td><td><div class="bar ${barCls(pct, 80, 95)}"><i style="width:${Math.min(100, pct)}%"></i></div></td></tr>`;
+  }).join("");
+  for (const c of list) {
+    const was = ctrState[c.name];
+    if (was && was !== c.status) log(dort(c) ? "info" : /unhealthy|exited|dead/i.test(c.status) ? "bad" : "info", dort(c) ? `${c.name} se met en veille` : `Conteneur ${c.name} : ${was} → ${c.status}`);
+    ctrState[c.name] = c.status;
+  }
+  const root = fs.find((f) => f.device_name?.includes("nvme")) || fs[0];
+  if (root) $("disk").textContent = `${fmt(root.used / 1e9)} / ${fmt(root.size / 1e9)} Go (${fmt(root.percent, 1)} %)`;
+  $("uptime").textContent = "en ligne depuis " + String(up).replace("days", "j").replace("day", "j");
+  ctrs = Object.fromEntries(list.map((c) => [c.name, c])); ctrsVu = Date.now(); disque = root || null;
+  majSchema();
+}
+
+/* ---------- Uptime Kuma : toutes les 30 s ---------- */
+let kumaCfg = null; const monState = {};
+async function services() {
+  if (!kumaCfg) kumaCfg = await get("/api/kuma/homelab");
+  const hb = await get("/api/kuma/heartbeat/homelab");
+  let up = 0, down = 0, total = 0;
+  const parNom = {};
+  const html = kumaCfg.publicGroupList.map((g) => {
+    const items = g.monitorList.map((m) => {
+      const beats = hb.heartbeatList[m.id] || [], last = beats[beats.length - 1] || {};
+      const s = last.status; total++;
+      parNom[m.name] = { s, msg: last.msg };
+      if (s === 1) up++; else if (s === 0) down++;
+      const prev = monState[m.id];
+      if (prev !== undefined && prev !== s) log(s === 1 ? "ok" : s === 0 ? "bad" : "warn", `${m.name} : ${s === 1 ? "rétabli" : s === 0 ? "EN PANNE" : "en attente"}${last.msg ? " (" + last.msg + ")" : ""}`);
+      monState[m.id] = s;
+      const u = hb.uptimeList[m.id + "_24"];
+      const cls = s === 0 ? "down" : s === 1 ? "" : "pend";
+      return `<span class="svc ${cls}" title="${(last.msg || "").replace(/"/g, "")}"><i></i>${m.name}<em>${u != null ? fmt(u * 100, u < 1 ? 1 : 0) + " %" : ""}</em></span>`;
+    }).join("");
+    return `<div class="grp"><b>${g.name}</b><div class="dots">${items}</div></div>`;
+  }).join("");
+  $("services").innerHTML = html;
+  $("svc-sum").textContent = `${up}/${total} opérationnels · disponibilité sur 24 h`;
+  setState(down);
+  kuma = parNom; kumaVu = Date.now();
+  majSchema();
+}
+function setState(down) {
+  const el = $("state");
+  el.classList.toggle("alert", down > 0);
+  el.lastChild.textContent = down > 0 ? `${down} service${down > 1 ? "s" : ""} en panne` : "Tous les systèmes sont opérationnels";
+}
+
+/* ---------- plan d'adressage : plan.json (réservations du routeur), chargé une fois ---------- */
+let plan = null; const byMac = {};
+async function loadPlan() {
+  plan = await get("/plan.json");
+  for (const r of plan.reservations) [r.mac, ...(r.alias || [])].forEach((m) => (byMac[m] = r));
+  $("plan-sum").textContent = `${plan.reseau} · ${plan.reservations.length} réservations · DHCP .${plan.plages.find((p) => /DHCP/.test(p.role))?.de}–.${plan.plages.find((p) => /DHCP/.test(p.role))?.a}`;
+}
+const oct = (ip) => +String(ip).split(".").pop();
+
+/* ---------- NetAlertX : toutes les 60 s ---------- */
+const priv = (ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip || "");
+let devices = [], wan = null; const devState = {};
+async function network() {
+  if (!plan) await loadPlan();
+  const d = await get("/api/reseau/devices");
+  wan = d.devices.find((x) => x.devMac === "internet") || null;
+  devices = d.devices.filter((x) => priv(x.devLastIP)).map((x) => {
+    // nom, rôle et adresse prévue d'après le plan ; la VM HA est vue par son lien privé 10.99.0.10
+    const r = byMac[(x.devMac || "").toLowerCase()], alias = r && (r.alias || []).includes((x.devMac || "").toLowerCase());
+    const ip = alias ? r.ip : x.devLastIP;
+    return { ...x, nom: r ? r.nom : /^\((name not found|unknown)\)$/i.test(x.devName || "") ? "Inconnu" : x.devName, role: r ? r.type : x.devType || "", ip, pos: oct(ip), resa: r || null,
+      ecart: r && !alias && r.ip !== x.devLastIP ? r.ip : null };
+  }).sort((a, b) => ipNum(a.ip) - ipNum(b.ip));
+  const on = devices.filter((x) => x.devPresentLastScan == 1).length, nw = devices.filter((x) => x.devIsNew == 1).length;
+  $("dev-sum").textContent = `${on} connectés / ${devices.length} connus${nw ? " · " + nw + " nouveau" + (nw > 1 ? "x" : "") : ""}`;
+  $("devs").innerHTML = devices.map((x) => `<li class="${x.devPresentLastScan == 1 ? "" : "off"} ${x.devIsNew == 1 ? "new" : ""}"><i></i><span>${esc(x.nom)}${x.ecart ? ' <small class="warn-t">prévu .' + oct(x.ecart) + "</small>" : ""}</span><small>${x.ip}</small></li>`).join("");
+  for (const x of devices) {
+    const p = devState[x.devMac];
+    if (p !== undefined && p !== x.devPresentLastScan) log(x.devPresentLastScan == 1 ? "info" : "warn", `${x.nom} (${x.ip}) ${x.devPresentLastScan == 1 ? "s'est connecté" : "s'est déconnecté"}`);
+    if (p === undefined && x.devIsNew == 1) log("warn", `Nouvel appareil : ${x.nom} (${x.ip}, ${fabricant(x.devVendor)})`);
+    if (p === undefined && x.ecart) log("warn", `${x.nom} est en ${x.ip} au lieu de ${x.ecart} (réservation appliquée au prochain bail)`);
+    devState[x.devMac] = x.devPresentLastScan;
+  }
+  renderPlan(); renderLiaison(); majSchema();
+}
+const ipNum = (ip) => ip.split(".").reduce((a, b) => a * 256 + +b, 0);
+const fabricant = (v) => (v || "fabricant inconnu").replace(/^\(Unknown: locally administered\)$/, "adresse privée (aléatoire)");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+function renderPlan() {
+  const pct = (n) => ((n - 1) / 254) * 100;
+  const etat = (x) => (x.ecart ? "new" : x.devIsNew == 1 ? "new" : x.devPresentLastScan == 1 ? "" : "off");
+  $("band").innerHTML =
+    `<div class="ticks">${devices.filter((x) => x.ip.startsWith("192.168.8.")).map((x) => `<b class="${etat(x)}" style="left:${pct(x.pos)}%" title="${esc(x.nom)} · ${x.ip}"></b>`).join("")}</div>` +
+    `<div class="segs">${plan.plages.map((p) => `<i style="left:${pct(p.de)}%;width:${((p.a - p.de + 1) / 254) * 100}%;background:${p.couleur}" title="${p.role} .${p.de}–.${p.a}"></i>`).join("")}</div>` +
+    `<div class="scale">${[1, 10, 20, 50, 70, 100, 200, 254].map((n) => `<span style="left:${pct(n)}%">.${n}</span>`).join("")}</div>`;
+  $("legend").innerHTML = plan.plages.map((p) => {
+    const n = devices.filter((x) => x.ip.startsWith("192.168.8.") && x.pos >= p.de && x.pos <= p.a).length;
+    return `<span><i style="background:${p.couleur}"></i>${p.role} <em>.${p.de}${p.a !== p.de ? "–." + p.a : ""}${n ? " · " + n : ""}</em></span>`;
+  }).join("");
+  const seen = {}; devices.forEach((x) => (seen[(x.devMac || "").toLowerCase()] = x));
+  const ligne = (st, ip, nom, mac, why) => `<tr><td><span class="st ${st}"></span>.${ip}</td><td>${esc(nom)}</td><td class="mac">${esc(mac)}</td><td class="why">${why}</td></tr>`;
+  const resa = plan.reservations.map((r) => {
+    const x = [r.mac, ...(r.alias || [])].map((m) => seen[m]).find(Boolean);
+    if (!x) return ligne("veille", oct(r.ip), r.nom, r.mac, /Phone|Smartwatch/.test(r.type) ? "pas vu sous cette adresse MAC (adresse Wi-Fi privée ?)" : "pas vu sur le réseau");
+    if (x.ecart) return ligne("mid", oct(r.ip), r.nom, r.mac, `<span class="warn-t">actuellement en .${oct(x.devLastIP)}</span> · prendra .${oct(r.ip)} au prochain bail DHCP`);
+    if (r.alias && x.devMac.toLowerCase() !== r.mac) return ligne(x.devPresentLastScan == 1 ? "" : "bad", oct(r.ip), r.nom, r.mac, `<span class="ok-t">en ligne</span> · vue par son lien privé ${x.devLastIP}`);
+    return ligne(x.devPresentLastScan == 1 ? "" : "veille", oct(r.ip), r.nom, r.mac, x.devPresentLastScan == 1 ? '<span class="ok-t">en ligne</span> · réservée' : "hors ligne · réservée");
+  });
+  const autres = devices.filter((x) => !x.resa).map((x) => ligne(x.devPresentLastScan == 1 ? (x.devIsNew == 1 ? "mid" : "") : "veille", x.pos, x.nom, x.devMac,
+    `DHCP · ${esc(fabricant(x.devVendor))}${x.devIsNew == 1 ? ' · <span class="warn-t">à identifier</span>' : ""}${x.devPresentLastScan == 1 ? "" : " · hors ligne"}`));
+  $("plan").innerHTML = resa.join("") + autres.join("");
+}
+
+/* ---------- liaison et DNS (hote.json + IP publique vue par NetAlertX) ---------- */
+let lastHost = null;
+// portail captif de la résidence (homelab-portail se reconnecte seul quand il coupe Internet)
+function portail(w) {
+  if (!w) return "lien montant";
+  if (w.refus) return "portail captif : compte refusé";
+  if (w.coupe_depuis) return "portail captif : coupé depuis " + new Date(w.coupe_depuis * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return "portail captif · " + (w.coupures_30j ? `${w.coupures_30j} coupure(s) réparée(s) en 30 j` : "aucune coupure en 30 j");
+}
+function renderLiaison() {
+  const r = lastHost?.reseau; if (!r || !plan) return;
+  const ms = (v) => (v == null || v < 0 ? "perdu" : fmt(v, v < 10 ? 1 : 0) + " ms");
+  const hop = (t, s, cls = "") => `<div class="hop ${cls}"><b>${t}</b><span>${s}</span></div>`;
+  const link = (t, bad) => `<div class="link ${bad ? "bad" : ""}">${t}</div>`;
+  const ro = plan.routeur;
+  $("chain").innerHTML =
+    hop("Internet", wan ? "IP publique " + esc(wan.devLastIP) : "") +
+    link(`${ms(r.ping_internet)} aller-retour vers 1.1.1.1`, r.ping_internet < 0) +
+    hop("Wi-Fi de la résidence", portail(lastHost.portail)) +
+    link("répéteur", !!lastHost.portail?.coupe_depuis) +
+    hop(`${ro.nom} · .${oct(ro.ip)}`, `${ro.modele} · firmware ${ro.firmware}`) +
+    link(`${ms(r.ping_passerelle)} · Ethernet ${r.lien_mbps >= 1000 ? r.lien_mbps / 1000 + " Gb/s" : r.lien_mbps + " Mb/s"} ${r.duplex === "full" ? "duplex" : r.duplex}`, r.ping_passerelle < 0) +
+    hop(`Raspberry Pi · .${oct(r.ip)}`, "serveur, VM Home Assistant", "me");
+  $("wan-sum").textContent = ro.mode.charAt(0).toLowerCase() + ro.mode.slice(1);
+  $("dnsflow").innerHTML = plan.dns.map((s) => `<span>${esc(s)}</span>`).join("<em>→</em>");
+  const okd = r.dns_reecriture === r.ip;
+  $("dnschk").innerHTML =
+    `<dt>Noms *.exemple en local</dt><dd class="${okd ? "ok-t" : "bad-t"}">${okd ? "✓ → " + r.ip : "✗ " + (r.dns_reecriture || "aucune réponse")}</dd>` +
+    `<dt>Blocage pub et pistage</dt><dd class="${r.dns_blocage ? "ok-t" : "bad-t"}">${r.dns_blocage ? "✓ actif" : "✗ inactif"}</dd>` +
+    `<dt>Réponse DNS via le routeur</dt><dd>${r.dns_ms < 0 ? '<span class="bad-t">aucune</span>' : r.dns_ms < 1 ? "< 1 ms (cache)" : r.dns_ms + " ms"}</dd>`;
+}
+
+/* ---------- domotique (Home Assistant, via hote.json) ---------- */
+const VIA = { homekit_controller: "HOMEKIT", matter: "MATTER", cast: "CAST", tuya: "TUYA" };
+const ALARME = { disarmed: ["désarmée", ""], armed_away: ["armée · absent", "ok"], armed_home: ["armée · présent", "ok"], armed_night: ["armée · nuit", "ok"], arming: ["armement…", "warn"], pending: ["en attente", "warn"], triggered: ["DÉCLENCHÉE", "bad"] };
+let prevDom = null;
+function renderDomotique(dm) {
+  if (!dm || dm.erreur) { $("dom-sum").textContent = "Home Assistant injoignable"; return; }
+  const ok = dm.appareils.filter((a) => a.ok).length, al = ALARME[dm.alarme] || [dm.alarme, "warn"];
+  $("dom-sum").textContent = `${ok}/${dm.appareils.length} appareils joignables`;
+  $("dom").innerHTML =
+    tile(al[0], "alarme caméra G3", al[1]) +
+    tile(dm.mouvement === "on" ? "détecté" : "calme", "mouvement (G3)", dm.mouvement === "on" ? "warn" : "") +
+    tile(`${dm.lumieres} / ${dm.lumieres_total}`, "lumières allumées") +
+    tile(fmt(dm.automatisations), "automatisations");
+  $("dom-devs").innerHTML = dm.appareils.map((a) => `<span class="svc ${a.ok ? "" : "down"}"><i></i>${esc(a.nom)}<em>${VIA[a.via] || a.via}</em></span>`).join("");
+  if (prevDom) {
+    if (dm.alarme !== prevDom.alarme) log(dm.alarme === "triggered" ? "bad" : "info", `Alarme de la caméra : ${al[0]}`);
+    if (dm.mouvement === "on" && prevDom.mouvement !== "on") log("info", "Mouvement détecté par la caméra G3");
+    for (const a of dm.appareils) { const b = prevDom.appareils.find((x) => x.nom === a.nom); if (b && b.ok !== a.ok) log(a.ok ? "ok" : "warn", `${a.nom} (${VIA[a.via] || a.via}) ${a.ok ? "à nouveau joignable" : "injoignable"}`); }
+  }
+  prevDom = dm;
+}
+
+/* radar : chaque appareil a un angle fixe (adresse) et une distance selon son rôle */
+const ring = (t) => /Router|Gateway/.test(t) ? 0.28 : /Server/.test(t) ? 0.5 : /Phone|Laptop|PC|Smartwatch/.test(t) ? 0.72 : /Domotic|Camera/.test(t) ? 0.86 : 0.97;
+let sweep = 0;
+function radar() {
+  const c = $("radar"), dpr = devicePixelRatio || 1, W = c.clientWidth;
+  if (c.width !== W * dpr) { c.width = W * dpr; c.height = W * dpr; }
+  const g = c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const R = W / 2 - 6, cx = W / 2, cy = W / 2;
+  g.clearRect(0, 0, W, W);
+  g.strokeStyle = "rgba(255,255,255,.09)"; g.lineWidth = 1;
+  [0.28, 0.5, 0.72, 0.86, 1].forEach((f) => { g.beginPath(); g.arc(cx, cy, R * f, 0, 7); g.stroke(); });
+  g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+  if (!reduced) {
+    const grad = g.createConicGradient ? g.createConicGradient(sweep - 0.9, cx, cy) : null;
+    if (grad) {
+      grad.addColorStop(0, rgba(COL.accent, 0)); grad.addColorStop(0.14, rgba(COL.accent, 0.22)); grad.addColorStop(0.145, rgba(COL.accent, 0));
+      g.fillStyle = grad; g.beginPath(); g.arc(cx, cy, R, 0, 7); g.fill();
+    }
+  }
+  g.font = "600 10px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"; g.textAlign = "center";
+  g.fillStyle = "rgba(235,235,245,.6)"; g.fillText("GL.iNet", cx, cy - R * 0.28 + 12);
+  devices.forEach((x) => {
+    // angle d'or : des adresses voisines tombent loin l'une de l'autre, sans chevauchement
+    const a = (x.pos * 2.39996) % (Math.PI * 2), r = R * ring(x.role || "");
+    const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
+    const on = x.devPresentLastScan == 1, isNew = x.devIsNew == 1;
+    let glow = 0;
+    if (!reduced) { let da = (sweep - (a + Math.PI * 2)) % (Math.PI * 2); if (da < 0) da += Math.PI * 2; glow = Math.max(0, 1 - da / 1.6); }
+    const col = x.ecart ? COL.warn : isNew ? COL.warn : on ? COL.ok : COL.gray;
+    g.beginPath(); g.arc(px, py, 4 + glow * 3, 0, 7); g.fillStyle = rgba(col, on ? 0.55 + glow * 0.45 : 0.6); g.fill();
+    if (on) { g.beginPath(); g.arc(px, py, 9 + glow * 6, 0, 7); g.strokeStyle = rgba(col, 0.12 + glow * 0.3); g.stroke(); }
+    g.fillStyle = `rgba(242,245,249,${0.45 + glow * 0.5})`; g.fillText("." + x.pos, px, py - 10);
+  });
+  g.beginPath(); g.arc(cx, cy, 5, 0, 7); g.fillStyle = COL.accent; g.fill();
+  sweep = (sweep + 0.018) % (Math.PI * 2);
+  if (!reduced) requestAnimationFrame(radar);
+}
+
+/* ---------- faits de l'hôte : toutes les 60 s ---------- */
+const ago = (t) => { const s = Date.now() / 1000 - t; return s < 3600 ? fmt(s / 60) + "\u00a0min" : s < 172800 ? fmt(s / 3600) + "\u00a0h" : fmt(s / 86400) + "\u00a0j"; };
+const tile = (v, label, cls = "") => `<div class="tile ${cls}"><b>${v}</b><span>${label}</span></div>`;
+let prevRefus = null;
+async function host() {
+  const h = await get("/data/hote.json");
+  lastHost = h; renderLiaison(); renderDomotique(h.domotique);
+  const pf = h.pare_feu || {}, ag = h.adguard || {}, ce = h.certificat || {}, nv = h.nvme || {}, sv = h.sauvegarde || {};
+  if (prevRefus != null && pf.refus > prevRefus) log("warn", `Pare-feu : ${fmt(pf.refus - prevRefus)} tentative(s) de connexion refusée(s)`);
+  prevRefus = pf.refus;
+  const pctBlk = ag.requetes ? (ag.bloquees / ag.requetes) * 100 : 0;
+  $("sec").innerHTML =
+    tile(fmt(pf.refus ?? 0), "connexions TCP refusées (pare-feu)") +
+    tile(fmt(pf.bannis ?? 0) + " / " + fmt(pf.bannis_total ?? 0), "IP bannies SSH (actuel / total)", pf.bannis ? "warn" : "ok") +
+    tile(fmt(ag.requetes ?? 0), `requêtes DNS · ${fmt(pctBlk, 1)} % bloquées`) +
+    tile((h.hote?.lynis ?? "—") + "/100", "durcissement Lynis", (h.hote?.lynis ?? 0) >= 80 ? "ok" : "warn");
+  $("sto").innerHTML =
+    tile((nv.temp ?? "—") + "\u00a0°C", `NVMe · usure ${nv.usure ?? "—"} %`, (nv.temp ?? 0) > 70 ? "warn" : "ok") +
+    tile(fmt(nv.ecrit_to ?? 0, 1) + "\u00a0To", `écrits · ${fmt(nv.erreurs ?? 0)} erreur(s) média`, nv.erreurs ? "bad" : "") +
+    tile(sv.derniere ? ago(sv.derniere) : "—", `depuis la dernière sauvegarde · ${fmt((sv.taille || 0) / 1e6)} Mo`, sv.derniere && Date.now() / 1000 - sv.derniere > 30 * 3600 ? "bad" : "ok") +
+    tile((ce.jours ?? "—") + "\u00a0j", "certificat HTTPS restant", (ce.jours ?? 99) < 20 ? "warn" : "ok");
+  $("nvme-model").textContent = `${fmt(nv.heures ?? 0)} h · ${fmt(nv.coupures ?? 0)} coupures`;
+  $("throttle").textContent = h.hote?.throttled === "0x0" ? "aucun" : (h.hote?.throttled || "—");
+  const ts = h.tailscale || {};
+  $("ts-ip").textContent = (ts.etat === "Running" ? "connecté · " : "état : " + (ts.etat || "?") + " · ") + (ts.ip || "");
+  $("ts").innerHTML = [{ nom: h.hote?.nom || "homelab", os: "ce Pi", en_ligne: ts.etat === "Running", ip: ts.ip }, ...(ts.pairs || [])]
+    .map((p) => `<li class="${p.en_ligne ? "" : "off"}"><i></i><span>${esc(p.nom)} <small>${esc(p.os || "")}</small></span><small>${esc(p.ip || "")}</small></li>`).join("");
+  const names = { duckdns: "DuckDNS", certs: "Certificat", sauvegarde: "Sauvegarde", onedrive: "OneDrive", "onedrive-image": "Image du Pi",
+                  "onedrive-essai": "Essai de restauration", maj: "Mises à jour", portail: "Portail captif" };
+  $("tasks").innerHTML = (h.taches || []).map((t) => `<dt>${names[t.nom] || t.nom}</dt><dd style="color:${t.resultat === "success" ? "var(--ok)" : "var(--bad)"}">${t.resultat === "success" ? "✓" : "✗"} ${t.prochaine ? "prochaine " + t.prochaine.split(" ").slice(1, 3).join(" ").replace(/:\d\d$/, "") : "toutes les 5 min"}</dd>`).join("");
+  $("last").textContent = "faits de l'hôte : " + new Date(h.genere * 1000).toLocaleTimeString("fr-FR");
+  majSchema();
+}
+
+/* ---------- schéma du homelab ----------
+   Chaque brique décrit d'où vient son voyant : sondes Uptime Kuma (kuma, par nom), conteneurs vus par Glances
+   (ctr, par nom) ou une règle sur les faits de l'hôte (regle). Le pire état l'emporte. Les liens sont construits
+   à partir du domaine de cette page (noc.<domaine>). */
+const DOM = location.hostname.replace(/^noc\./, "");
+const lien = (sous, chemin = "") => `https://${sous ? sous + "." : ""}${DOM}${chemin}`;
+$("lien-doc").href = lien("doc");
+let kuma = {}, kumaVu = 0, ctrs = {}, ctrsVu = 0, disque = null; // remplis par services() et containers()
+const frais = (t, ms) => t > 0 && Date.now() - t < ms;
+const H = () => (lastHost && frais(lastHost.genere * 1000, 180e3) ? lastHost : {}); // faits de l'hôte, s'ils sont récents
+const msT = (v) => (v == null ? "" : v < 0 ? "perdu" : fmt(v, v < 10 ? 1 : 0) + " ms");
+const quand = (t) => `<span class="q">${t}</span>`;
+const kumaJoignable = () => (kumaVu ? (frais(kumaVu, 90e3) ? "ok" : "bad") : null);
+
+const ACCES = [
+  { id: "ts", nom: "Tes appareils", url: "https://login.tailscale.com/admin/machines", kuma: ["Tailscale connecté"],
+    regle: () => (H().tailscale?.etat ? (H().tailscale.etat === "Running" ? "ok" : "bad") : null),
+    detail: () => `Tailscale · ${(H().tailscale?.pairs || []).filter((p) => p.en_ligne).length} en ligne`,
+    role: "accès depuis n'importe où, sans port ouvert. Ouvre la console Tailscale." },
+  { id: "wifi", nom: "Wi-Fi de l'appart", url: "http://192.168.8.1", kuma: ["Routeur GL.iNet", "DNS local (routeur → AdGuard)"],
+    sous: "GL.iNet · .1 · répéteur", valeur: () => msT(H().reseau?.ping_passerelle),
+    role: "le routeur capte le Wi-Fi de la résidence et crée le réseau de l'appart. Ouvre son interface (réseau local uniquement)." },
+  { id: "objets", nom: "Objets connectés", url: lien("ha", "/appart-accueil"), kuma: ["Caméra Aqara G3", "Nest Hub (chambre)"],
+    regle: () => { const a = H().domotique?.appareils; if (!Array.isArray(a)) return null; const n = a.filter((x) => x.ok).length; return n === a.length ? "ok" : n ? "pend" : "bad"; },
+    detail: () => { const a = H().domotique?.appareils; return Array.isArray(a) ? `${a.filter((x) => x.ok).length}/${a.length} joignables` : "via Home Assistant"; },
+    role: "caméra et capteurs Aqara, lampe et télécommande IKEA, prise Meross, Nest Hub, sonde du balcon. Ouvre la page Appart de Home Assistant." },
+  { id: "internet", nom: "Internet", kuma: ["Internet"], sous: "aucun port ouvert", valeur: () => msT(H().reseau?.ping_internet),
+    role: "sortie par le Wi-Fi de la résidence. Aucun port ouvert : de l'extérieur, on n'entre que par Tailscale." },
+];
+const COEUR = [
+  { id: "fw", nom: "Pare-feu nftables", sous: "refus par défaut · réseau local et Tailscale · fail2ban sur SSH",
+    regle: () => { const p = H().pare_feu; return !p ? null : p.erreur ? "bad" : "ok"; },
+    valeur: () => { const p = H().pare_feu; return p && !p.erreur ? `${fmt(p.refus)} refus · ${fmt(p.bannis)} banni${p.bannis > 1 ? "s" : ""}` : ""; },
+    role: "tout ce qui ne vient pas du réseau local ou de Tailscale est refusé ; fail2ban bannit les attaques sur SSH." },
+  { id: "nginx", nom: "nginx · HTTPS", kuma: ["nginx (proxy)"], ctr: ["proxy"], detail: () => "*." + DOM,
+    valeur: () => (H().certificat?.jours != null ? `certificat ${H().certificat.jours} j` : ""),
+    role: "seule porte d'entrée des services : HTTPS pour tous les sous-domaines, certificat Let's Encrypt renouvelé automatiquement." },
+];
+const GROUPES = [
+  { id: "maison", nom: "Maison", couleur: "var(--accent)", briques: [
+    { id: "ha", nom: "Home Assistant", sous: "ha. · VM 3 Go", url: lien("ha"), kuma: ["Home Assistant"], dep: "vm",
+      role: "la domotique de l'appart : sécurité, lumières, énergie, météo." },
+    { id: "immich", nom: "Immich", sous: "photos.", url: lien("photos"), kuma: ["Immich"], ctr: ["immich"], dep: "db",
+      role: "photos et vidéos, sauvegardées depuis le téléphone." } ] },
+  { id: "applis", nom: "Applications", couleur: "var(--blue)", briques: [
+    { id: "nextcloud", nom: "Nextcloud", sous: "cloud. · à la demande", url: lien("cloud"), ctr: ["nextcloud"], dep: "db",
+      role: "fichiers, agenda, contacts, notes, Deck, News et Forms." },
+    { id: "pdf", nom: "Stirling-PDF", sous: "pdf. · à la demande", url: lien("pdf"), ctr: ["stirling-pdf"],
+      role: "outils PDF : démarre à la première visite, s'arrête après 15 min sans activité." },
+    { id: "outils", nom: "IT-Tools", sous: "outils.", url: lien("outils"), kuma: ["IT-Tools"], ctr: ["it-tools"],
+      role: "boîte à outils : encodage, hachage, réseau, dates…" },
+    { id: "sites", nom: "Sites statiques", sous: "site. · web.", url: lien("site"), kuma: ["Site local", "Apache"],
+      role: "pages web simples, servies par nginx (site.) et Apache (web.)." } ] },
+  { id: "survie", nom: "Survie", couleur: "var(--ok)", briques: [
+    { id: "wiki", nom: "Wikipédia", sous: "wiki. · à la demande", url: lien("wiki"), ctr: ["kiwix"],
+      role: "Wikipédia en français (texte complet), iFixit, Wikivoyage, Wikibooks et recettes, sans Internet (Kiwix)." },
+    { id: "ia", nom: "IA locale", sous: "ia. · à la demande", url: lien("ia"), ctr: ["ia"],
+      role: "trois modèles au choix sur le processeur du Pi (llama.cpp) : général Qwen3.5 4B et rapide 2B non censurés, code Qwen2.5-Coder 3B ; ≈ 3 Go de mémoire quand elle est réveillée." },
+    { id: "films", nom: "Films", sous: "films. · à la demande", url: lien("films"), ctr: ["jellyfin"],
+      role: "Jellyfin : les films, lus sans conversion sur le Mac, l'iPhone ou la télé." },
+    { id: "cartes", nom: "Cartes", sous: "cartes. · hors ligne", url: lien("cartes"), kuma: ["nginx (proxy)"],
+      role: "carte de France et recherche de lieux sans Internet, servies directement par nginx." } ] },
+  { id: "supervision", nom: "Supervision", couleur: "var(--pink)", briques: [
+    { id: "noc", nom: "Salle de contrôle", sous: "noc. · cette page", kuma: ["Salle de contrôle"],
+      role: "le Pi et le réseau en direct." },
+    { id: "kuma", nom: "Uptime Kuma", sous: "status.", url: lien("status"), ctr: ["uptime-kuma"], regle: kumaJoignable, dep: "sock",
+      role: "les sondes vérifiées chaque minute, d'où viennent la plupart des voyants de ce schéma ; alertes ntfy." },
+    { id: "netalertx", nom: "NetAlertX", sous: "reseau.", url: lien("reseau"), kuma: ["NetAlertX", "NetAlertX · moteur"], ctr: ["netalertx"],
+      role: "inventaire du réseau de l'appart, alerte à chaque nouvel appareil." },
+    { id: "glances", nom: "Glances", sous: "API interne", kuma: ["Glances"], ctr: ["glances"], dep: "sock",
+      role: "mesures du Pi pour cette page, Homepage et Home Assistant (pas de page à ouvrir)." } ] },
+  { id: "admin", nom: "Administration", couleur: "var(--yellow)", briques: [
+    { id: "homepage", nom: "Homepage", sous: "page d'accueil", url: lien(""), kuma: ["Accueil"], ctr: ["homepage"], dep: "sock",
+      role: "la page d'accueil du homelab, avec l'état de chaque service." },
+    { id: "ntfy", nom: "ntfy", sous: "ntfy.", url: lien("ntfy"), kuma: ["ntfy"], ctr: ["ntfy"],
+      role: "notifications vers le téléphone, sujet homelab." },
+    { id: "portainer", nom: "Portainer", sous: "portainer.", url: lien("portainer"), kuma: ["Portainer"], ctr: ["portainer"],
+      role: "gestion des conteneurs Docker (accès complet)." },
+    { id: "dozzle", nom: "Dozzle", sous: "logs.", url: lien("logs"), kuma: ["Dozzle"], ctr: ["dozzle"], dep: "sock",
+      role: "journaux des conteneurs en direct." } ] },
+];
+// apps de la VM : une app essentielle arrêtée est en panne, les autres sont simplement éteintes
+const etatApp = (slug, essentielle) => {
+  const l = H().apps_ha; if (!Array.isArray(l)) return null;
+  const a = l.find((x) => x.slug === slug);
+  return !a ? "inconnu" : a.etat === "started" ? "ok" : a.etat === "stopped" ? (essentielle ? "bad" : "veille") : "pend";
+};
+const BLOCS = [
+  { id: "vm", nom: "VM Home Assistant OS", url: lien("ha", "/app"), sous: "192.168.8.11 · 3 Go · 2 cœurs · IPv6 pour Thread", briques: [
+    { id: "adguard", nom: "AdGuard Home", url: lien("ha", "/a0d7b954_adguard"), kuma: ["DNS local (routeur → AdGuard)"], regle: () => etatApp("a0d7b954_adguard", true),
+      valeur: () => { const a = H().adguard; return a?.requetes ? fmt((a.bloquees / a.requetes) * 100, 1) + " % bloqué" : ""; },
+      role: "le DNS de tout l'appart : bloque pubs et pistage, envoie *.exemple vers le Pi." },
+    { id: "matter", nom: "Matter Server", url: lien("ha", "/config/integrations/integration/matter"), regle: () => etatApp("core_matter_server", true),
+      valeur: () => { const a = H().domotique?.appareils; return Array.isArray(a) ? `${a.filter((x) => x.via === "matter").length} objets` : ""; },
+      role: "parle aux objets Matter : lampe et télécommande IKEA (Thread, via le Nest Hub), prise Meross." },
+    { id: "ssh", nom: "Terminal & SSH", url: lien("ha", "/core_ssh"), regle: () => etatApp("core_ssh"), role: "terminal dans Home Assistant." },
+    { id: "editeur", nom: "File editor", url: lien("ha", "/core_configurator"), regle: () => etatApp("core_configurator"), role: "éditeur des fichiers YAML de Home Assistant." } ] },
+  { id: "db", nom: "Bases de données", sous: "réseaux internes, sans Internet", briques: [
+    { id: "mariadb", nom: "MariaDB → Nextcloud", ctr: ["nextcloud-db"], role: "base de données de Nextcloud." },
+    { id: "redis", nom: "Redis → Nextcloud", ctr: ["nextcloud-redis"], role: "cache et verrous de Nextcloud." },
+    { id: "cron", nom: "Tâches cron → Nextcloud", ctr: ["nextcloud-cron"], role: "tâches de fond de Nextcloud, toutes les 5 min quand il est éveillé." },
+    { id: "postgres", nom: "PostgreSQL → Immich", kuma: ["Immich · PostgreSQL"], ctr: ["immich-db"], role: "base de données d'Immich (avec la recherche vectorielle)." },
+    { id: "valkey", nom: "Valkey → Immich", kuma: ["Immich · Valkey"], ctr: ["immich-redis"], role: "file d'attente des tâches d'Immich." } ] },
+  { id: "sock", nom: "socket-proxy", sous: "Docker en lecture seule pour Homepage, Dozzle, Glances et Uptime Kuma ; Portainer a un accès complet", briques: [
+    { id: "socket", nom: "socket-proxy", kuma: ["socket-proxy"], ctr: ["socket-proxy"], role: "laisse lire l'état de Docker sans pouvoir le modifier." } ] },
+];
+const AUTOS = [
+  { id: "duckdns", nom: "DuckDNS", valeur: () => quand("5 min"), sous: "nom → IP Tailscale", kuma: ["DuckDNS (mise à jour)", "Nom " + DOM],
+    role: "tient le nom du homelab pointé sur l'adresse Tailscale du Pi." },
+  { id: "certif", nom: "Certificat", valeur: () => quand("chaque nuit"), kuma: ["Certificat HTTPS (vérification)"],
+    detail: () => (H().certificat?.jours != null ? `Let's Encrypt · ${H().certificat.jours} j` : "Let's Encrypt"),
+    role: "renouvelle le certificat HTTPS avant son expiration." },
+  { id: "sauvegarde", nom: "Sauvegarde", valeur: () => quand("03:30"), kuma: ["Sauvegarde nocturne"],
+    detail: () => (H().sauvegarde?.derniere ? `dernière il y a ${ago(H().sauvegarde.derniere)}` : "fichiers, bases, Home Assistant"),
+    role: "copie chaque nuit les fichiers, les bases et la sauvegarde de Home Assistant ; garde 3 nuits (OneDrive prend le relais)." },
+  { id: "onedrive", nom: "OneDrive", valeur: () => quand("04:15"), url: "https://www.office.com/launch/onedrive",
+    kuma: ["Sauvegarde OneDrive", "Image du Pi (OneDrive)"],
+    detail: () => { const o = H().onedrive; return o?.octets != null ? `${fmt(o.octets / 1e9, 1)} Go sur ${fmt(o.plafond / 1e9)} Go` : "copie de nuit + image du dimanche"; },
+    role: "copie complète du système chaque nuit (chiffrée) et image à flasher chaque dimanche, dans le OneDrive de la fac. Ouvre OneDrive." },
+  { id: "essai", nom: "Essai de restauration", valeur: () => quand("le 8"), kuma: ["Essai de restauration (OneDrive)"],
+    detail: () => { const e = H().essai; return e?.termine ? `${e.reussi ? "réussi" : "ÉCHEC"} le ${new Date(e.date * 1000).toLocaleDateString("fr-FR")}` : "chaque mois, la nuit"; },
+    role: "chaque mois, restaure la dernière copie de nuit dans un disque virtuel, la compare au Pi et vérifie l'image : la preuve que les sauvegardes marchent." },
+  { id: "portail", nom: "Portail captif", valeur: () => quand("1 min"),
+    regle: () => { const w = H().portail; return !w ? null : w.refus || w.coupe_depuis ? "bad" : "ok"; },
+    detail: () => {
+      const w = H().portail; if (!w) return "Wi-Fi de la résidence";
+      if (w.refus) return "compte refusé : voir la doc"; if (w.coupe_depuis) return "Internet coupé : reconnexion…";
+      const l = w.derniere; return l ? `dernière coupure ${l.slice(8, 10)}/${l.slice(5, 7)} · ${(l.match(/coupure de (\d+) min/) || [])[1] || "?"} min` : "aucune coupure";
+    },
+    role: "vérifie chaque minute qu'Internet passe et se reconnecte seul au portail captif de la résidence quand il coupe." },
+  { id: "maj", nom: "Mises à jour", valeur: () => quand("dim. 04:30"), sous: "Docker et Debian", kuma: ["Mises à jour hebdomadaires"],
+    role: "met à jour les conteneurs et le système chaque dimanche." },
+  { id: "surveillance", nom: "Surveillance", valeur: () => quand("1 min"), url: lien("status", "/status/homelab"), regle: kumaJoignable,
+    detail: () => `${Object.keys(kuma).length || "—"} sondes Kuma`, role: "vérifie chaque service, le routeur, la caméra et le DNS. Ouvre la page de statut." },
+  { id: "scan", nom: "Réseau", valeur: () => quand("1 min"), url: lien("reseau"), kuma: ["NetAlertX · moteur"],
+    detail: () => (devices.length ? `${devices.filter((x) => x.devPresentLastScan == 1).length} appareils vus` : "NetAlertX"),
+    role: "scanne le réseau de l'appart et signale tout nouvel appareil." },
+];
+const ALERTE = { id: "alerte", nom: "ntfy → ton téléphone", sous: "alerte immédiate · sujet homelab", url: lien("ntfy", "/homelab"), kuma: ["ntfy"],
+  role: "reçoit les alertes des automatismes et des sondes. Ouvre le sujet homelab." };
+
+// toutes les briques, par identifiant ; les services sont celles des quatre groupes
+const BRIQUES = [...ACCES, ...COEUR, ...GROUPES.flatMap((g) => g.briques.map((b) => ({ ...b, service: true }))),
+  ...BLOCS.flatMap((k) => k.briques), ...AUTOS, ALERTE];
+const PAR_ID = Object.fromEntries(BRIQUES.map((b) => [b.id, b]));
+const LIBELLE = { ok: "en ligne", pend: "en attente", bad: "en panne", veille: "en veille", inconnu: "pas de mesure" };
+const RANG = { veille: 0, ok: 1, inconnu: 2, pend: 3, bad: 4 };
+
+function etatKuma(nom) {
+  const m = frais(kumaVu, 90e3) ? kuma[nom] : null;
+  return !m ? "inconnu" : m.s === 1 ? "ok" : m.s === 0 ? "bad" : "pend";
+}
+function etatCtr(nom) {
+  const c = frais(ctrsVu, 30e3) ? ctrs[nom] : null;
+  if (!c) return "inconnu";
+  if (dort(c)) return "veille";
+  if (arrete(c) || /unhealthy|dead/i.test(c.status || "")) return "bad";
+  return /starting|restarting|paused/i.test(c.status || "") ? "pend" : "ok";
+}
+function etatBrique(b) {
+  const l = [...(b.kuma || []).map(etatKuma), ...(b.ctr || []).map(etatCtr)];
+  if (b.regle) l.push(b.regle() || "inconnu");
+  return l.length ? l.reduce((a, x) => (RANG[x] > RANG[a] ? x : a)) : "inconnu";
+}
+function memoire(nom) {
+  const c = ctrs[nom]; if (!c || arrete(c)) return "";
+  const mo = (c.memory_usage || 0) / 1048576, lim = (c.memory_limit || 0) / 1048576, pct = lim ? (mo / lim) * 100 : 0;
+  return `${mo >= 1024 ? fmt(mo / 1024, 1) + " Go" : fmt(mo) + " Mo"}<div class="bar ${barCls(pct, 80, 95)}"><i style="width:${Math.min(100, pct)}%"></i></div>`;
+}
+
+/* construction, une fois : accès | châssis du Pi | automatismes */
+function brique(b, cls = "") {
+  const tag = b.url ? "a" : "div", attrs = b.url ? ` href="${b.url}" target="_blank" rel="noopener"` : "";
+  const sous = cls === "mini" ? "" : `<small>${esc(b.sous || "")}</small>`;
+  return `<${tag} class="nd ${cls}" id="n-${b.id}"${attrs}><i class="led"></i><span><b>${esc(b.nom)}</b>${sous}</span><em></em></${tag}>`;
+}
+$("sch").insertAdjacentHTML("beforeend",
+  `<div class="sch-col" id="z-acces"><b class="cap">Accès</b><div class="cartes">${ACCES.map((b) => brique(b)).join("")}</div></div>` +
+  `<div class="pi" id="pi">` +
+    `<div class="pi-h"><b>Raspberry Pi 5</b><span id="pi-sous">8 Go · 4 cœurs Cortex-A76 · Debian 12</span><div class="chips"><span>Docker</span><span>KVM</span><span>AppArmor</span></div></div>` +
+    COEUR.map((b) => brique(b)).join("") +
+    `<div class="sgrps">${GROUPES.map((g) => `<div class="sgrp" id="g-${g.id}" style="--g:${g.couleur}"><b><i></i>${g.nom}</b>${g.briques.map((b) => brique(b)).join("")}</div>`).join("")}</div>` +
+    `<div class="blocs">${BLOCS.map((k) => `<div class="bloc" id="b-${k.id}"><h3>${k.url ? `<a href="${k.url}" target="_blank" rel="noopener">${k.nom}</a>` : k.nom}</h3><p>${k.sous}</p>${k.briques.map((b) => brique(b, "mini")).join("")}</div>`).join("")}</div>` +
+    `<div class="disque" id="n-nvme"><div><span><i class="led"></i> <b>NVMe Samsung 512 Go</b> · PCIe Gen 2</span><span id="nvme-occ">—</span></div>` +
+      `<div class="bar"><i id="nvme-bar" style="width:0%"></i></div><div><span>données : /srv/homelab, un dossier par service</span><span id="nvme-sante">—</span></div></div>` +
+  `</div>` +
+  `<div class="sch-col" id="z-auto"><b class="cap">Automatismes</b><div class="cartes">${AUTOS.map((b) => brique(b)).join("")}` +
+    `<p class="sch-note">si échec, panne ou intrus :</p>${brique(ALERTE, "fort")}</div></div>`);
+
+/* mise à jour des voyants, des valeurs et du résumé, à chaque nouvelle mesure */
+const valeurs = {};
+function majSchema() {
+  const n = { ok: 0, veille: 0, total: 0 }, pannes = [];
+  for (const b of BRIQUES) {
+    const el = $("n-" + b.id), st = etatBrique(b);
+    el.dataset.etat = st;
+    el.querySelector(".led").className = "led " + st;
+    const sm = el.querySelector("small"); if (sm && b.detail) sm.textContent = b.detail();
+    const v = b.valeur ? b.valeur() : b.ctr ? memoire(b.ctr[0]) : "";
+    if (valeurs[b.id] !== v) { el.querySelector("em").innerHTML = v; valeurs[b.id] = v; }
+    el.title = `${b.nom} : ${LIBELLE[st]}`;
+    if (b.service) { n.total++; if (st === "ok") n.ok++; if (st === "veille") n.veille++; if (st === "bad") pannes.push(b.nom); }
+  }
+  const nv = H().nvme;
+  const stD = !nv || nv.erreur ? "inconnu" : nv.erreurs ? "bad" : nv.temp >= 70 ? "pend" : "ok";
+  $("n-nvme").querySelector(".led").className = "led " + stD;
+  if (disque) { $("nvme-occ").textContent = `${fmt(disque.used / 1e9)} / ${fmt(disque.size / 1e9)} Go`; $("nvme-bar").style.width = disque.percent + "%"; }
+  if (nv && !nv.erreur) $("nvme-sante").textContent = `${nv.temp} °C · usure ${nv.usure} % · ${fmt(nv.erreurs)} erreur${nv.erreurs > 1 ? "s" : ""}`;
+  if (H().hote?.noyau) $("pi-sous").textContent = `8 Go · 4 cœurs Cortex-A76 · Debian 12 · noyau ${H().hote.noyau.split("+")[0]}`;
+  $("sch-sum").textContent = `${n.ok}/${n.total} services en ligne${n.veille ? ` · ${n.veille} en veille` : ""}${pannes.length ? " · en panne : " + pannes.join(", ") : ""}`;
+  planifierCables();
+}
+
+/* survol ou focus : fiche de la brique sous le schéma, et sa dépendance (VM, bases, socket-proxy) en surbrillance */
+const AIDE = "Clique sur une brique pour ouvrir le service ; survole-la pour savoir à quoi elle sert. Voyants : Uptime Kuma, Glances et Home Assistant.";
+let survolee;
+function survol(el) {
+  if (el === survolee) return;
+  survolee = el;
+  document.querySelectorAll("#sch .on").forEach((x) => x.classList.remove("on"));
+  const b = el && PAR_ID[el.id.slice(2)];
+  if (!b) { $("sch-info").textContent = AIDE; return; }
+  el.classList.add("on");
+  const dep = b.dep && BLOCS.find((k) => k.id === b.dep);
+  if (dep) $("b-" + dep.id).classList.add("on");
+  $("sch-info").innerHTML = `<b>${esc(b.nom)}</b> · ${LIBELLE[el.dataset.etat || "inconnu"]} — ${esc(b.role || "")}${dep ? " Dépend de : " + esc(dep.nom) + "." : ""}`;
+}
+$("sch").addEventListener("pointerover", (e) => survol(e.target.closest(".nd")));
+$("sch").addEventListener("pointerleave", () => survol(null));
+$("sch").addEventListener("focusin", (e) => survol(e.target.closest(".nd")));
+$("sch").addEventListener("focusout", () => survol(null));
+survol(null);
+
+/* câbles : tracés d'après la position réelle des briques, redessinés à chaque changement de taille ou d'état */
+const large = matchMedia("(min-width: 1400px)"), moyen = matchMedia("(min-width: 900px)");
+function chemin(p, rayon = 8) {
+  // ligne brisée à angles droits, coins arrondis
+  const r1 = (v) => Math.round(v * 10) / 10;
+  let d = `M${r1(p[0][0])},${r1(p[0][1])}`;
+  for (let i = 1; i < p.length - 1; i++) {
+    const [x0, y0] = p[i - 1], [x1, y1] = p[i], [x2, y2] = p[i + 1];
+    const k1 = Math.min(rayon, Math.hypot(x1 - x0, y1 - y0) / 2), k2 = Math.min(rayon, Math.hypot(x2 - x1, y2 - y1) / 2);
+    d += ` L${r1(x1 - Math.sign(x1 - x0) * k1)},${r1(y1 - Math.sign(y1 - y0) * k1)} Q${r1(x1)},${r1(y1)} ${r1(x1 + Math.sign(x2 - x1) * k2)},${r1(y1 + Math.sign(y2 - y1) * k2)}`;
+  }
+  const z = p[p.length - 1];
+  return d + ` L${r1(z[0])},${r1(z[1])}`;
+}
+function fil(points, couleur, etat) {
+  const d = chemin(points), z = points[points.length - 1];
+  const flux = etat === "ok" || etat === "pend" ? `<path class="flux ${etat}" d="${d}"/>` : "";
+  return `<g style="--c:${couleur}"><path class="fil ${etat}" d="${d}"/>${flux}<circle class="bout ${etat}" cx="${z[0]}" cy="${z[1]}" r="2.5"/></g>`;
+}
+const croix = (x, y) => `<path class="x" d="M${x - 4},${y - 4} l8,8 m0,-8 l-8,8"/>`;
+function cables() {
+  const o = $("sch").getBoundingClientRect();
+  const B = (id) => {
+    const r = $(id)?.getBoundingClientRect();
+    return r && r.width ? { l: r.left - o.left, r: r.right - o.left, t: r.top - o.top, b: r.bottom - o.top, x: (r.left + r.right) / 2 - o.left, y: (r.top + r.bottom) / 2 - o.top } : null;
+  };
+  const st = (id) => $(id)?.dataset.etat || "inconnu";
+  const pi = B("pi"), fw = B("n-fw"), ngx = B("n-nginx"), out = [];
+  if (!pi || !fw || !ngx) return;
+  const [ts, wifi, obj, net] = ["n-ts", "n-wifi", "n-objets", "n-internet"].map(B);
+  if (large.matches) {
+    // accès à gauche : Tailscale et réseau local entrent par le pare-feu, les objets parlent à la VM, Internet n'entre pas
+    const x0 = Math.max(ts.r, wifi.r, obj.r, net.r), vm = B("b-vm");
+    out.push(fil([[ts.r, ts.y], [x0 + 12, ts.y], [x0 + 12, fw.y - 5], [fw.l, fw.y - 5]], COL.accent, st("n-ts")));
+    out.push(fil([[wifi.r, wifi.y], [x0 + 22, wifi.y], [x0 + 22, fw.y + 5], [fw.l, fw.y + 5]], COL.blue, st("n-wifi")));
+    if (vm) out.push(fil([[obj.r, obj.y], [x0 + 32, obj.y], [x0 + 32, vm.y], [vm.l, vm.y]], COL.purple, st("n-objets")));
+    out.push(`<path class="fil bad" d="M${net.r},${net.y} H${x0 + 9}"/>` + croix(x0 + 16, net.y));
+    // automatismes à droite : un échec part en alerte vers ntfy (points rouges)
+    const nt = B("n-alerte"), bx = B("z-auto").l - 14;
+    for (const a of AUTOS) {
+      const c = B("n-" + a.id), panne = st("n-" + a.id) === "bad";
+      if (c && nt) out.push(fil([[c.l, c.y], [bx, c.y], [bx, nt.y], [nt.l, nt.y]], panne ? COL.bad : "rgba(235,235,245,.6)", panne ? "ok" : "repos"));
+    }
+  } else if (moyen.matches) {
+    // accès au-dessus du Pi : chaque carte descend vers le châssis
+    for (const [a, c, id] of [[ts, COL.accent, "n-ts"], [wifi, COL.blue, "n-wifi"], [obj, COL.purple, "n-objets"]]) out.push(fil([[a.x, a.b], [a.x, pi.t]], c, st(id)));
+    const m = (net.b + pi.t) / 2;
+    out.push(`<path class="fil bad" d="M${net.x},${net.b} V${m - 7}"/>` + croix(net.x, m));
+  }
+  // dans le Pi : pare-feu → nginx → les quatre groupes de services (si leurs en-têtes sont sur une même ligne)
+  out.push(fil([[ngx.x, fw.b], [ngx.x, ngx.t]], COL.accent, st("n-nginx")));
+  const gs = GROUPES.map((g) => B("g-" + g.id)).filter(Boolean);
+  const haut = Math.min(...gs.map((g) => g.t)), bus = (ngx.b + haut) / 2;
+  if (gs.length && gs.every((g) => Math.abs(g.t - haut) < 4))
+    for (const g of gs) out.push(fil([[ngx.x, ngx.b], [ngx.x, bus], [g.x, bus], [g.x, g.t]], COL.accent, st("n-nginx")));
+  $("wires").innerHTML = out.join("");
+}
+let cablesPrevus = false;
+function planifierCables() {
+  if (cablesPrevus) return;
+  cablesPrevus = true;
+  requestAnimationFrame(() => { cablesPrevus = false; cables(); });
+}
+new ResizeObserver(planifierCables).observe($("sch"));
+majSchema();
+
+/* ---------- boucles ---------- */
+function loop(fn, ms, name) {
+  let failed = false;
+  const run = async () => {
+    try { await fn(); if (failed) log("ok", name + " : reconnecté"); failed = false; }
+    catch (e) { if (!failed) log("bad", name + " : injoignable (" + e.message + ")"); failed = true; }
+  };
+  run(); setInterval(run, ms);
+}
+log("info", "Salle de contrôle en ligne");
+loop(vitals, 2000, "Glances");
+loop(containers, 5000, "Conteneurs");
+loop(services, 30000, "Uptime Kuma");
+loop(network, 60000, "NetAlertX");
+loop(host, 60000, "Hôte");
+radar();
+if (reduced) setInterval(radar, 5000);
+</script>
+</body>
+</html>

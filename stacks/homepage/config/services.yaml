@@ -1,0 +1,286 @@
+# Page d'accueil (Homepage). Chaque tuile a son capteur :
+#  - le widget du service quand il en a un (Home Assistant, Immich, Uptime Kuma, Portainer, NetAlertX, Glances) ;
+#  - siteMonitor : point vert et temps de réponse de la page, seulement pour ce qui est toujours allumé ;
+#  - container : état du conteneur (Docker en lecture seule via socket-proxy), et showStats : processeur, mémoire, réseau ;
+#  - customapi sur https://noc.@DOMAIN@/data/accueil.json (écrit chaque minute par homelab-noc) : chiffres lus sur le
+#    disque et dans Docker, pour que les services en veille soient décrits sans jamais être réveillés.
+- Supervision:
+    - Salle de contrôle:
+        icon: mdi-radar
+        href: https://noc.@DOMAIN@
+        widget:
+          type: glances
+          url: https://noc.@DOMAIN@
+          username: admin
+          password: "{{HOMEPAGE_FILE_NOC_PASSWORD}}"
+          version: 4
+          metric: info
+          chart: true
+    - Réseau local:
+        icon: mdi-lan
+        href: https://reseau.@DOMAIN@
+        description: Nouveaux appareils et alertes (NetAlertX)
+        widget:
+          type: netalertx
+          url: https://reseau.@DOMAIN@/api-netalertx
+          key: "{{HOMEPAGE_FILE_NETALERTX_KEY}}"
+          fields: ["new_devices", "down_alerts"]
+    - Routeur GL.iNet:
+        icon: mdi-router-wireless
+        href: http://192.168.8.1
+        description: Opal · répéteur du Wi-Fi de la résidence (portail captif reconnecté seul) · 192.168.8.0/24
+        siteMonitor: http://192.168.8.1
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { routeur: internet }
+              label: Internet
+            - field: { routeur: dns }
+              label: DNS
+            - field: { routeur: portail }
+              label: Portail captif
+            - field: { routeur: coupures }
+              label: Coupures en 30 j
+    - Débit Ethernet:
+        icon: mdi-swap-vertical
+        href: https://noc.@DOMAIN@
+        widget:
+          type: glances
+          url: https://noc.@DOMAIN@
+          username: admin
+          password: "{{HOMEPAGE_FILE_NOC_PASSWORD}}"
+          version: 4
+          metric: network:eth0
+          chart: true
+
+- Maison:
+    - Home Assistant:
+        icon: home-assistant.svg
+        href: https://ha.@DOMAIN@
+        description: Domotique
+        siteMonitor: https://ha.@DOMAIN@/manifest.json
+        widget:
+          type: homeassistant
+          url: https://ha.@DOMAIN@
+          key: "{{HOMEPAGE_FILE_HA_TOKEN}}"
+          custom:
+            - template: "{{ states.sensor | selectattr('entity_id', 'search', '_statut$') | selectattr('state', 'eq', 'up') | list | count }} / {{ states.sensor | selectattr('entity_id', 'search', '_statut$') | list | count }}"
+              label: Contrôles OK
+            - template: "{{ states('sensor.adguard_home_taux_de_requetes_dns_bloquees') | float(0) | round(1) | string | replace('.', ',') }} %"
+              label: DNS bloqués
+            - state: sensor.noc_exemple_duckdns_org_temperature_cpu_thermal_0
+              label: Pi
+            - template: "{{ {'disarmed': 'désarmée', 'armed_away': 'armée', 'armed_home': 'armée', 'armed_night': 'armée', 'triggered': 'DÉCLENCHÉE'}.get(states('alarm_control_panel.camera_g3_security_system'), '—') }}"
+              label: Alarme G3
+    - Immich:
+        icon: immich.svg
+        href: https://photos.@DOMAIN@
+        description: Photos et vidéos
+        server: pi
+        container: immich
+        widget:
+          type: immich
+          url: https://photos.@DOMAIN@
+          key: "{{HOMEPAGE_FILE_IMMICH_KEY}}"
+          version: 2
+    - Films:
+        icon: jellyfin.svg
+        href: https://films.@DOMAIN@
+        description: Jellyfin · en veille, démarre à la demande (≈ 15 s)
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { films: etat }
+              label: État
+            - field: { films: nombre }
+              label: Films
+            - field: { films: taille }
+              label: Taille
+
+- Applications:
+    - Nextcloud:
+        icon: nextcloud.svg
+        href: https://cloud.@DOMAIN@
+        description: Fichiers, agenda, contacts · en veille, démarre à la demande
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { cloud: etat }
+              label: État
+            - field: { cloud: reveil }
+              label: Réveil
+            - field: { cloud: donnees }
+              label: Fichiers
+    - Stirling-PDF:
+        icon: stirling-pdf.svg
+        href: https://pdf.@DOMAIN@
+        description: Outils PDF · en veille, démarre à la demande
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { pdf: etat }
+              label: État
+            - field: { pdf: reveil }
+              label: Réveil
+    - IT-Tools:
+        icon: it-tools.svg
+        href: https://outils.@DOMAIN@
+        description: Boîte à outils
+        siteMonitor: https://outils.@DOMAIN@
+        server: pi
+        container: it-tools
+        showStats: true
+
+- Survie:
+    - Wikipédia:
+        icon: kiwix.svg
+        href: https://wiki.@DOMAIN@
+        description: Wikipédia en entier, iFixit, Wikivoyage, manuels, recettes · en veille (≈ 2 s)
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { wiki: etat }
+              label: État
+            - field: { wiki: livres }
+              label: Livres
+            - field: { wiki: taille }
+              label: Taille
+    - IA locale:
+        icon: mdi-robot-happy-outline
+        href: https://ia.@DOMAIN@
+        description: Général et rapide non censurés, code · chargée au premier message
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { ia: etat }
+              label: État
+            - field: { ia: modeles }
+              label: Modèles
+            - field: { ia: taille }
+              label: Taille
+    - Cartes:
+        icon: mdi-map-search-outline
+        href: https://cartes.@DOMAIN@
+        description: France entière, recherche de lieux, sans Internet
+        siteMonitor: https://cartes.@DOMAIN@
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { cartes: taille }
+              label: Carte
+            - field: { cartes: lieux }
+              label: Lieux
+    - Site local:
+        icon: mdi-web
+        href: https://site.@DOMAIN@
+        description: Page statique, servie même sans Internet
+        siteMonitor: https://site.@DOMAIN@
+
+- Administration:
+    - Uptime Kuma:
+        icon: uptime-kuma.svg
+        href: https://status.@DOMAIN@
+        description: Disponibilité
+        server: pi
+        container: uptime-kuma
+        widget:
+          type: uptimekuma
+          url: https://status.@DOMAIN@
+          slug: homelab
+          fields: ["up", "down"]
+    - Sauvegardes:
+        icon: mdi-cloud-check-outline
+        href: https://noc.@DOMAIN@
+        description: Chaque nuit · image le dimanche · essai le 8
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { sauvegardes: locale }
+              label: Locale
+            - field: { sauvegardes: onedrive }
+              label: OneDrive
+            - field: { sauvegardes: place }
+              label: Place
+            - field: { sauvegardes: essai }
+              label: Essai
+    - Tailscale:
+        icon: si-tailscale-#e2e8f0
+        href: https://login.tailscale.com/admin/machines
+        description: Accès depuis l'extérieur (VPN)
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { tailscale: etat }
+              label: Pi
+            - field: { tailscale: appareils }
+              label: Appareils en ligne
+            - field: { tailscale: ip }
+              label: Adresse
+    - Portainer:
+        icon: portainer.svg
+        href: https://portainer.@DOMAIN@
+        description: Conteneurs
+        server: pi
+        container: portainer
+        widget:
+          type: portainer
+          url: https://portainer.@DOMAIN@
+          env: 1
+          key: "{{HOMEPAGE_FILE_PORTAINER_KEY}}"
+    - ntfy:
+        icon: ntfy.svg
+        href: https://ntfy.@DOMAIN@
+        description: Notifications
+        server: pi
+        container: ntfy
+        widget:
+          type: customapi
+          url: https://ntfy.@DOMAIN@/v1/stats
+          refreshInterval: 60000
+          mappings:
+            - field: messages
+              label: Messages publiés
+              format: number
+    - Dozzle:
+        icon: dozzle.svg
+        href: https://logs.@DOMAIN@
+        description: Journaux
+        siteMonitor: https://logs.@DOMAIN@
+        server: pi
+        container: dozzle
+        showStats: true
+    - Apache:
+        icon: apache.svg
+        href: https://web.@DOMAIN@
+        description: Serveur web
+        siteMonitor: https://web.@DOMAIN@
+    - Documentation:
+        icon: mdi-book-open-variant
+        href: https://doc.@DOMAIN@
+        description: Services, sauvegardes, alertes, dépannage
+        siteMonitor: https://doc.@DOMAIN@
+        widget:
+          type: customapi
+          url: https://noc.@DOMAIN@/data/accueil.json
+          refreshInterval: 60000
+          mappings:
+            - field: { doc: maj }
+              label: Mise à jour

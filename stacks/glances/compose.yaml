@@ -1,0 +1,19 @@
+# Mesures en direct de l'hôte (processeur, mémoire, réseau, capteurs, conteneurs) : API seulement, sur 127.0.0.1.
+# Lue par la salle de contrôle (noc.), Homepage et Home Assistant, via nginx, sans mot de passe (réseau local et Tailscale seulement).
+name: glances
+services:
+  glances:
+    image: nicolargo/glances:4.5.8-full
+    container_name: glances
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    environment:
+      TZ: ${TZ}
+      DOCKER_HOST: tcp://127.0.0.1:2375
+      GLANCES_OPT: "-w --disable-webui --bind 127.0.0.1 --port 61208 --disable-check-update -C /etc/glances/glances.conf"
+    volumes:
+      - ./glances.conf:/etc/glances/glances.conf:ro
+      - /etc/os-release:/etc/os-release:ro

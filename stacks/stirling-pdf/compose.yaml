@@ -1,0 +1,24 @@
+# Démarré à la demande : systemd écoute sur 127.0.0.1:8008 (homelab-pdf.socket), lance le conteneur à la première
+# connexion et l'arrête après 15 min sans activité. Le conteneur lui-même écoute sur 127.0.0.1:18008.
+name: stirling-pdf
+services:
+  stirling-pdf:
+    image: stirlingtools/stirling-pdf:3.2.2
+    container_name: stirling-pdf
+    restart: "no"
+    ports: ["127.0.0.1:18008:8080"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 1g
+    env_file: [/etc/homelab/secrets/stirling.env]
+    environment:
+      TZ: ${TZ}
+      SECURITY_ENABLELOGIN: "true"
+      DISABLE_ADDITIONAL_FEATURES: "false"
+      SYSTEM_DEFAULTLOCALE: fr-FR
+      SYSTEM_ENABLEANALYTICS: "false"
+      UI_APPNAME: "PDF"
+      JAVA_CUSTOM_OPTS: "-XX:MaxRAMPercentage=60"
+    volumes:
+      - /srv/homelab/stirling-pdf/configs:/configs
+      - /srv/homelab/stirling-pdf/logs:/logs
+      - /srv/homelab/stirling-pdf/pipeline:/pipeline

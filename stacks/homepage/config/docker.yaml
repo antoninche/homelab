@@ -1,0 +1,4 @@
+# Accès Docker en lecture seule via socket-proxy
+pi:
+  host: socket-proxy
+  port: 2375

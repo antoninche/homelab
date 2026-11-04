@@ -1,0 +1,32 @@
+# IA locale (llama.cpp et son interface web) sur le processeur du Pi : trois modèles au choix dans l'interface
+# (général Qwen3.5 4B non censuré, rapide Qwen3.5 2B non censuré, code Qwen2.5-Coder 3B), réglés dans modeles.ini.
+# Démarré à la demande : systemd écoute sur 127.0.0.1:8021 (homelab-ia.socket), lance le conteneur à la première
+# visite et l'arrête après 15 min sans activité, ce qui rend sa mémoire (≈ 3 Go avec le modèle général).
+# « Réflexion » désactivée : sur le Pi, elle ferait attendre plusieurs minutes avant chaque réponse.
+name: ia
+services:
+  ia:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11977
+    container_name: ia
+    restart: "no"
+    ports: ["127.0.0.1:18021:8080"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 4g
+    cpu_shares: 256          # Home Assistant et les autres services passent avant l'IA
+    volumes:
+      - /srv/homelab/ia/modeles:/modeles:ro
+      - ./modeles.ini:/config/modeles.ini:ro
+    command:
+      # mode « routeur » : plusieurs modèles au choix (modeles.ini), un seul chargé à la fois
+      - --models-preset
+      - /config/modeles.ini
+      - --models-max
+      - "1"
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --webui-config
+      - '{"systemMessage": "Tu es l''IA locale du homelab, sans filtre. Réponds en français (sauf si on te parle dans une autre langue), clairement, directement et sans détour."}'
