@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+# Faits de l'hôte pour la salle de contrôle (noc.) : Tailscale, pare-feu, sauvegardes, certificat, NVMe,
+# AdGuard, tâches planifiées, liaison réseau, portail captif, essai de restauration, domotique. Écrit /opt/homelab/proxy/site/noc/data/hote.json
+# et, pour les widgets de la page d'accueil, data/accueil.json (lancé chaque minute).
+import glob, json, os, re, subprocess, time
+
+OUT = "/opt/homelab/proxy/site/noc/data/hote.json"
+ADG_CACHE = "/var/lib/homelab/adguard-stats.json"
+
+
+def sh(cmd, timeout=20):
+    try:
+        return subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout).stdout.strip()
+    except subprocess.TimeoutExpired:
+        return ""
+
+
+def safe(fn):
+    try:
+        return fn()
+    except Exception as e:  # une source en panne ne doit pas vider le tableau de bord
+        return {"erreur": str(e)[:120]}
+
+
+def tailscale():
+    d = json.loads(sh("tailscale status --json") or "{}")
+    peers = [{"nom": p.get("HostName"), "os": p.get("OS"), "en_ligne": bool(p.get("Online")),
+              "ip": (p.get("TailscaleIPs") or [""])[0], "vu": p.get("LastSeen")}
+             for p in (d.get("Peer") or {}).values()]
+    me = d.get("Self") or {}
+    return {"etat": d.get("BackendState"), "ip": (me.get("TailscaleIPs") or [""])[0], "pairs": peers}
+
+
+def pare_feu():
+    n = 0
+    for r in json.loads(sh("nft -j list chain inet homelab input") or "{}").get("nftables", []):
+        rule = r.get("rule")
+        if rule and rule.get("comment") == "refus":
+            n = next((x["counter"]["packets"] for x in rule["expr"] if "counter" in x), 0)
+    f2b = sh("fail2ban-client status sshd")
+    num = lambda k: int((re.search(k + r":\s*(\d+)", f2b) or [0, 0])[1])
+    return {"refus": n, "bannis": num("Currently banned"), "bannis_total": num("Total banned")}
+
+
+def sauvegarde():
+    dirs = sorted(p for p in glob.glob("/var/backups/homelab/20*") if os.path.isdir(p))
+    if not dirs:
+        return {}
+    last = dirs[-1]
+    size = int(sh(f"du -sb {last}").split()[0] or 0)
+    return {"derniere": int(os.path.getmtime(last)), "taille": size, "nombre": len(dirs)}
+
+
+def certificat():
+    crt = sorted(glob.glob("/etc/homelab/lego/certificates/*.crt"))
+    crt = [c for c in crt if not c.endswith(".issuer.crt")]
+    end = sh(f"openssl x509 -enddate -noout -in {crt[0]}").split("=", 1)[1]
+    t = int(sh(f"date -d '{end}' +%s"))
+    return {"expire": t, "jours": (t - int(time.time())) // 86400}
+
+
+def nvme():
+    d = json.loads(sh("/usr/sbin/nvme smart-log /dev/nvme0 -o json") or "{}")
+    n = lambda k: int(str(d.get(k, 0)).replace(",", ""))
+    return {"temp": n("temperature") - 273, "usure": n("percent_used"), "heures": n("power_on_hours"),
+            "coupures": n("unsafe_shutdowns"), "erreurs": n("media_errors"),
+            "ecrit_to": round(n("data_units_written") * 512000 / 1e12, 1)}
+
+
+def adguard():
+    # interrogé via l'agent de la VM, au plus toutes les 5 minutes
+    if os.path.exists(ADG_CACHE) and time.time() - os.path.getmtime(ADG_CACHE) < 300:
+        return json.load(open(ADG_CACHE))
+    raw = sh("ha-vm-exec 'curl -s http://127.0.0.1:45158/control/stats'", timeout=60)
+    s = json.loads(raw[raw.index("{"):]) if "{" in raw else {}
+    top = lambda k: [list(x.keys())[0] for x in s.get(k, [])[:5]]
+    out = {"requetes": s.get("num_dns_queries", 0), "bloquees": s.get("num_blocked_filtering", 0),
+           "temps_ms": round(s.get("avg_processing_time", 0) * 1000, 1), "top_bloques": top("top_blocked_domains")}
+    os.makedirs(os.path.dirname(ADG_CACHE), exist_ok=True)
+    json.dump(out, open(ADG_CACHE, "w"))
+    return out
+
+
+def taches():
+    out = []
+    for t in ["duckdns", "certs", "sauvegarde", "onedrive", "onedrive-image", "onedrive-essai", "maj", "portail"]:
+        p = dict(l.split("=", 1) for l in sh(f"systemctl show homelab-{t}.timer homelab-{t}.service "
+                                              "-p NextElapseUSecRealtime -p Result -p ExecMainExitTimestamp").splitlines() if "=" in l)
+        out.append({"nom": t, "prochaine": p.get("NextElapseUSecRealtime", ""), "resultat": p.get("Result", ""),
+                    "derniere": p.get("ExecMainExitTimestamp", "")})
+    return out
+
+
+def reseau():
+    # liaison de l'appart : passerelle, latences, chaîne DNS (routeur → AdGuard), lien Ethernet du Pi
+    gw = (re.search(r"default via (\S+)", sh("ip route show default")) or [0, ""])[1]
+    ping = lambda h: float((re.search(r"= [\d.]+/([\d.]+)/", sh(f"ping -c3 -i0.3 -W2 -q {h}")) or [0, -1])[1])
+    q = sh(f"dig @{gw} wikipedia.org +tries=1 +time=3")
+    lire = lambda f: open(f).read().strip()
+    return {"passerelle": gw, "ip": (re.search(r"inet (\S+)/", sh("ip -4 addr show eth0")) or [0, ""])[1],
+            "lien_mbps": int(lire("/sys/class/net/eth0/speed")), "duplex": lire("/sys/class/net/eth0/duplex"),
+            "ping_passerelle": ping(gw), "ping_internet": ping("1.1.1.1"),
+            "dns_ms": int((re.search(r"Query time: (\d+)", q) or [0, -1])[1]),
+            "dns_reecriture": sh(f"dig @{gw} exemple.duckdns.org +short +tries=1 +time=3"),
+            "dns_blocage": sh(f"dig @{gw} doubleclick.net +short +tries=1 +time=3") == "0.0.0.0"}
+
+
+HA_TPL = """{% set ns = namespace(l=[]) %}{% for i in ['matter','homekit_controller','cast','tuya'] %}\
+{% for d in integration_entities(i) | map('device_id') | reject('none') | unique %}{% set e = device_entities(d) %}\
+{% set ns.l = ns.l + [{"nom": device_attr(d,'name_by_user') or device_attr(d,'name'), "via": i,\
+ "ok": (e | select('is_state','unavailable') | list | count) == 0}] %}{% endfor %}{% endfor %}\
+{{ {"appareils": ns.l, "lumieres": states.light | selectattr('state','eq','on') | list | count,\
+ "lumieres_total": states.light | list | count, "automatisations": states.automation | list | count,\
+ "alarme": states('alarm_control_panel.camera_g3_security_system'),\
+ "mouvement": states('binary_sensor.camera_g3_motion_sensor')} | to_json }}"""
+
+
+def jeton_ha():
+    return open("/etc/homelab/secrets/ha_token").read().strip()
+
+
+def domotique():
+    # résumé de Home Assistant (appareils Matter, HomeKit, Cast, Tuya ; alarme de la caméra)
+    import urllib.request
+    req = urllib.request.Request("http://10.99.0.10/api/template", json.dumps({"template": HA_TPL}).encode(),
+                                 {"Authorization": "Bearer " + jeton_ha(), "Content-Type": "application/json"})
+    return json.loads(urllib.request.urlopen(req, timeout=15).read())
+
+
+def apps_ha():
+    # état des apps de la VM (AdGuard, Matter, Terminal, File editor) : seule l'API websocket de HA le donne
+    import websocket
+    ws = websocket.create_connection("ws://10.99.0.10/api/websocket", timeout=15)
+    try:
+        ws.recv()
+        ws.send(json.dumps({"type": "auth", "access_token": jeton_ha()}))
+        ws.recv()
+        ws.send(json.dumps({"id": 1, "type": "supervisor/api", "endpoint": "/addons", "method": "get"}))
+        r = json.loads(ws.recv())
+    finally:
+        ws.close()
+    return [{"slug": a["slug"], "nom": a["name"], "etat": a["state"]} for a in r["result"]["addons"]]
+
+
+def onedrive():
+    # place occupée par les sauvegardes dans OneDrive, relevée par homelab-onedrive après chaque envoi
+    return json.load(open("/var/lib/homelab-onedrive/etat.json"))
+
+
+def portail():
+    # portail captif de la résidence (homelab-portail) : coupure en cours, compte refusé, coupures réparées
+    d = "/var/lib/homelab/portail"
+    lire = lambda n: open(f"{d}/{n}").read().strip() if os.path.exists(f"{d}/{n}") else ""
+    journal = lire("journal").splitlines()
+    mois = time.strftime("%Y-%m-%d", time.localtime(time.time() - 30 * 86400))
+    return {"coupe_depuis": int(lire("coupure")) if lire("coupure") else None, "refus": os.path.exists(f"{d}/refus"),
+            "derniere": journal[-1] if journal else "", "coupures_30j": sum(1 for l in journal if l[:10] >= mois)}
+
+
+def essai():
+    # dernier essai de restauration complet (homelab-onedrive essai, le 8 de chaque mois)
+    f = "/var/lib/homelab-onedrive/essai-restauration.txt"
+    t = open(f).read().splitlines()
+    res = next((l for l in reversed(t) if l.startswith("RÉSULTAT")), "")
+    return {"date": int(os.path.getmtime(f)), "termine": bool(res), "reussi": res.startswith("RÉSULTAT : réussi"),
+            "duree": next((l.split(": ", 1)[1] for l in t if l.startswith("Durée")), "")}
+
+
+def hote():
+    model = open("/proc/device-tree/model").read().strip("\x00") if os.path.exists("/proc/device-tree/model") else ""
+    return {"nom": os.uname().nodename, "modele": model, "noyau": os.uname().release,
+            "demarrage": int(time.time() - float(open("/proc/uptime").read().split()[0])),
+            "lynis": int((re.search(r"hardening_index=(\d+)", open("/var/log/lynis-report.dat").read()) or [0, 0])[1]),
+            "throttled": sh("vcgencmd get_throttled").split("=")[-1]}
+
+
+data = {"genere": int(time.time()), "hote": safe(hote), "tailscale": safe(tailscale), "pare_feu": safe(pare_feu),
+        "sauvegarde": safe(sauvegarde), "certificat": safe(certificat), "nvme": safe(nvme),
+        "adguard": safe(adguard), "taches": safe(taches), "reseau": safe(reseau), "domotique": safe(domotique),
+        "apps_ha": safe(apps_ha), "onedrive": safe(onedrive), "portail": safe(portail), "essai": safe(essai)}
+
+
+# ---------- chiffres de la page d'accueil (widgets « customapi » de Homepage : data/accueil.json) ----------
+# Les services en veille sont lus sur le disque et dans Docker, sans jamais être réveillés.
+ACCUEIL = os.path.join(os.path.dirname(OUT), "accueil.json")
+CACHE = "/var/lib/homelab/noc-accueil-cache.json"
+
+
+def accueil(d):
+    go = lambda o: f"{o / 1e9:.1f} Go".replace(".", ",")
+    ms = lambda v: "perdu" if v is None or v < 0 else f"{v:.0f} ms"
+    def quand(t):  # heure de la dernière fois si c'était dans les dernières 24 h, sinon la date
+        if not t:
+            return "—"
+        return time.strftime("%H:%M" if time.time() - t < 86400 else "%d/%m", time.localtime(t))
+    etats = dict(l.split(" ", 1) for l in sh("docker ps -a --format '{{.Names}} {{.State}}'").splitlines() if " " in l)
+    eveil = lambda c: "éveillé" if etats.get(c) == "running" else "en veille"
+    fich = lambda motif: [f for f in glob.glob(motif) if os.path.isfile(f)]
+    taille = lambda l: sum(os.path.getsize(f) for f in l)
+    # données de Nextcloud (beaucoup de fichiers) et nombre de lieux de la carte : recalculés au plus une fois par heure
+    try:
+        cache = json.load(open(CACHE))
+    except Exception:
+        cache = {}
+    if time.time() - cache.get("t", 0) > 3600:
+        cache = {"t": time.time(), "cloud": int((sh("du -sb /srv/homelab/nextcloud/data").split() or ["0"])[0]),
+                 "lieux": len(json.load(open("/opt/homelab/proxy/site/cartes/lieux.json")))}
+        json.dump(cache, open(CACHE, "w"))
+    films = [f for f in fich("/srv/homelab/films/*/*") if f.lower().endswith((".mp4", ".mkv", ".m4v"))]
+    zim, gguf = fich("/srv/homelab/kiwix/*.zim"), fich("/srv/homelab/ia/modeles/*.gguf")
+    r, w, ts, od, ess = (d.get(k) or {} for k in ("reseau", "portail", "tailscale", "onedrive", "essai"))
+    pairs = ts.get("pairs") or []
+    nuit = next((t for t in d.get("taches") or [] if t.get("nom") == "onedrive"), {})
+    if nuit.get("resultat") != "success":
+        nuit_txt = "ÉCHEC"
+    else:
+        nuit_txt = quand(int(sh(f"date -d '{nuit.get('derniere', '')}' +%s") or 0))
+    if sh("systemctl is-active homelab-onedrive-essai.service") in ("active", "activating"):
+        essai_txt = "en cours"
+    elif ess.get("termine"):
+        essai_txt = ("réussi" if ess.get("reussi") else "ÉCHEC") + time.strftime(" le %d/%m", time.localtime(ess["date"]))
+    else:
+        essai_txt = "à venir"
+    return {
+        "films": {"etat": eveil("jellyfin"), "nombre": len(films), "taille": go(taille(films))},
+        "wiki": {"etat": eveil("kiwix"), "livres": len(zim), "taille": go(taille(zim))},
+        "ia": {"etat": eveil("ia"), "modeles": len(gguf), "taille": go(taille(gguf))},
+        "cartes": {"taille": go(taille(fich("/srv/homelab/cartes/*.pmtiles"))), "lieux": f"{cache.get('lieux', 0):,}".replace(",", " ")},
+        "cloud": {"etat": eveil("nextcloud"), "reveil": "≈ 10 s", "donnees": go(cache.get("cloud", 0))},
+        "pdf": {"etat": eveil("stirling-pdf"), "reveil": "≈ 1 min"},
+        "routeur": {"internet": ms(r.get("ping_internet")), "dns": ms(r.get("dns_ms")), "coupures": w.get("coupures_30j", 0),
+                    "portail": "compte refusé" if w.get("refus") else "coupé" if w.get("coupe_depuis") else "connecté"},
+        "tailscale": {"etat": "connecté" if ts.get("etat") == "Running" else (ts.get("etat") or "?"),
+                      "appareils": f"{sum(1 for p in pairs if p.get('en_ligne'))} / {len(pairs)}", "ip": ts.get("ip", "")},
+        "sauvegardes": {"locale": quand((d.get("sauvegarde") or {}).get("derniere")), "onedrive": nuit_txt,
+                        "place": f"{od.get('octets', 0) / 1e9:.0f} Go",
+                        "essai": essai_txt},
+        "doc": {"maj": time.strftime("%d/%m à %H:%M", time.localtime(os.path.getmtime("/opt/homelab/proxy/site/doc/index.html")))},
+    }
+
+
+for chemin, contenu in ((OUT, data), (ACCUEIL, safe(lambda: accueil(data)))):
+    tmp = chemin + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(contenu, f, ensure_ascii=False)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, chemin)

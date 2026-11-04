@@ -1,0 +1,65 @@
+#!/bin/bash
+# Mises à jour d'Immich, à la main : Immich change souvent de fonctionnement d'une version à l'autre, alors sa version
+# est figée dans /opt/homelab/immich/compose.yaml et « homelab maj » ne la touche pas.
+#
+# Usage : homelab-immich              version installée, dernière version publiée, lien vers les notes
+#         homelab-immich verifier     (chaque dimanche, par homelab maj) notification silencieuse si une version est sortie
+#         homelab-immich v3.4.0       export de la base, mise à jour, vérification que tout redémarre
+set -euo pipefail
+COMPOSE=/opt/homelab/immich/compose.yaml
+DUMP=/var/backups/homelab/immich-avant-mise-a-jour.sql.gz   # un seul fichier, remplacé à chaque mise à jour
+
+installee() { grep -o -E 'immich-server:v[0-9.]+' "$COMPOSE" | cut -d: -f2; }
+derniere() {  # étiquette et alerte de rupture de la dernière version publiée
+  curl -fsS -m 20 https://api.github.com/repos/immich-app/immich/releases/latest | python3 -c '
+import json, sys, re
+r = json.load(sys.stdin)
+casse = bool(re.search(r"breaking change", r.get("body") or "", re.I))
+print(r["tag_name"], "rupture" if casse else "")'
+}
+notes() { echo "https://github.com/immich-app/immich/releases/tag/$1"; }
+alerte() {
+  local t; t=$(cat /etc/homelab/secrets/ntfy_token 2>/dev/null) || return 0
+  curl -fsS -m 20 -H "Authorization: Bearer $t" -H "Title: $1" -H "Priority: low" -H "Tags: package" \
+    -H "Click: $3" --data-binary "$2" http://127.0.0.1:8011/homelab >/dev/null || true
+}
+
+etat() {
+  local i d casse; i=$(installee); read -r d casse < <(derniere)
+  echo "Installée : $i · dernière publiée : $d${casse:+ (annonce des changements cassants)}"
+  [ "$i" = "$d" ] && echo "À jour." || echo "Notes à lire avant : $(notes "$d")  puis : sudo homelab-immich $d"
+}
+
+verifier() {
+  local i d casse; i=$(installee); read -r d casse < <(derniere) || return 0
+  [ "$i" = "$d" ] && return 0
+  local majeure=""; [ "${i%%.*}" != "${d%%.*}" ] && majeure=" Nouvelle version MAJEURE : attendre les premiers correctifs."
+  alerte "Immich $d disponible (installé : $i)" \
+    "Lire les notes avant de mettre à jour${casse:+ (changements cassants annoncés)}.$majeure Puis : sudo homelab-immich $d" "$(notes "$d")"
+}
+
+mettre_a_jour() {
+  local v=$1 avant; avant=$(installee)
+  [[ $v =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Version attendue sous la forme v3.4.0"; exit 1; }
+  echo "Immich $avant → $v. Notes : $(notes "$v")"
+  echo "1/4 Export de la base vers $DUMP"
+  docker exec immich-db pg_dump -U immich immich | gzip > "$DUMP"
+  echo "2/4 Téléchargement de l'image"
+  sed -i -E "s#immich-server:v[0-9.]+#immich-server:$v#" "$COMPOSE"
+  (cd /opt/homelab/immich && docker compose pull -q immich && docker compose up -d)
+  echo "3/4 Attente du redémarrage (migrations de la base comprises)"
+  for _ in $(seq 1 90); do [ "$(docker inspect -f '{{.State.Health.Status}}' immich)" = healthy ] && break; sleep 5; done
+  if [ "$(docker inspect -f '{{.State.Health.Status}}' immich)" != healthy ]; then
+    echo "Immich ne répond pas. Retour possible : sudo sed -i 's#immich-server:$v#immich-server:$avant#' $COMPOSE,"
+    echo "puis restaurer la base depuis $DUMP (voir la documentation, section Immich)."; exit 1
+  fi
+  echo "4/4 Immich $v fonctionne. Penser à mettre à jour l'app Immich de l'iPhone."
+  docker image prune -f >/dev/null
+}
+
+case "${1:-}" in
+  "")       etat ;;
+  verifier) verifier ;;
+  v*)       mettre_a_jour "$1" ;;
+  *)        sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 1 ;;
+esac

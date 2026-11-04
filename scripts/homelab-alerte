@@ -1,0 +1,13 @@
+#!/bin/sh
+# Alerte ntfy (sujet « homelab ») quand une tâche planifiée échoue : homelab-alerte <unité>
+# Critique (son) : sauvegardes et certificat, il faut agir. Silencieux : le reste (mises à jour : Kuma signale
+# de toute façon un service qui ne redémarre pas).
+unit=$1
+token=$(cat /etc/homelab/secrets/ntfy_token 2>/dev/null) || exit 0
+case "$unit" in
+  homelab-sauvegarde*|homelab-onedrive*|homelab-certs*) prio=high ;;
+  *) prio=low ;;
+esac
+journalctl -u "$unit" -n 8 --no-pager -o cat | curl -fsS -m 20 \
+  -H "Authorization: Bearer $token" -H "Title: Échec : $unit" -H "Priority: $prio" -H "Tags: rotating_light" \
+  --data-binary @- http://127.0.0.1:8011/homelab >/dev/null

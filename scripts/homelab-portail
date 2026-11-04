@@ -1,0 +1,103 @@
+#!/bin/bash
+# homelab-portail : garde l'appart connecté au Wi-Fi de la résidence, qui passe par un portail captif.
+# Quand le portail reprend la main (session expirée), Internet est coupé pour tout l'appart : plus de sauvegardes,
+# d'accès distant ni de notifications. Ce script le détecte et refait la connexion comme la page du portail.
+#
+# Version publique : les échanges propres à l'opérateur Wi-Fi (adresses du portail, formulaires, jetons) sont dans
+# /etc/homelab/portail-operateur.sh, qui n'est pas publié. Ce fichier définit une fonction portail_connexion qui
+# renvoie 0 si la connexion est acceptée, 2 si le compte est refusé, autre chose en cas d'échec.
+# Compte : /etc/homelab/secrets/portail_identifiant et portail_mdp.
+# Si le portail refuse le compte, plus aucun essai tant que ces fichiers ne changent pas (pour ne pas le faire bloquer).
+#
+#   homelab-portail             vérifie Internet et reconnecte si besoin (minuteur homelab-portail.timer, chaque minute)
+#   homelab-portail connecter   reconnecte tout de suite
+#   homelab-portail etat        état de la connexion et dernières coupures
+set -uo pipefail
+
+S=/etc/homelab/secrets
+OPERATEUR=/etc/homelab/portail-operateur.sh
+DNS_RESIDENCE=10.0.0.1          # DNS que la résidence donne au routeur (interface wwan du GL.iNet)
+ETAT=/var/lib/homelab/portail   # coupure (début de la coupure en cours), refus, dernier-essai, adresses
+JOURNAL=$ETAT/journal           # une ligne par coupure réparée
+
+log() { logger -t homelab-portail "$*"; [ -t 1 ] && echo "$*"; return 0; }
+ntfy() {  # ntfy <titre> <message> [priorité] : notification ntfy, sujet homelab
+  local t; t=$(cat $S/ntfy_token 2>/dev/null) || return 0
+  curl -fsS -m 20 -H "Authorization: Bearer $t" -H "Title: $1" -H "Priority: ${3:-low}" -H "Tags: signal_strength" \
+    --data-binary "$2" http://127.0.0.1:8011/homelab >/dev/null || true
+}
+
+resoudre() {  # adresse d'un nom selon le DNS de la résidence, sinon la dernière connue
+  local ip; ip=$(dig +short +time=3 +tries=2 @"$DNS_RESIDENCE" "$1" A 2>/dev/null | grep -E '^[0-9.]+$' | tail -1)
+  if [ -n "$ip" ]; then sed -i "/^$1 /d" $ETAT/adresses 2>/dev/null; echo "$1 $ip" >> $ETAT/adresses; echo "$ip"
+  else awk -v n="$1" '$1 == n {print $2}' $ETAT/adresses 2>/dev/null | tail -1; fi
+}
+
+internet() {  # 0 si Internet passe : page qui répond 204 quand rien ne s'interpose (deux essais à 10 s d'écart)
+  # Le nom est résolu par le DNS de la résidence : AdGuard passe par Internet, coupé à ce moment-là.
+  local ip n
+  for n in 1 2; do
+    ip=$(resoudre connectivitycheck.gstatic.com)
+    [ -n "$ip" ] && [ "$(curl -s -m 8 -o /dev/null -w '%{http_code}' --resolve connectivitycheck.gstatic.com:80:"$ip" \
+      http://connectivitycheck.gstatic.com/generate_204)" = 204 ] && return 0
+    [ $n = 1 ] && sleep 10
+  done
+  return 1
+}
+
+connecter() {
+  [ -s $S/portail_identifiant ] && [ -s $S/portail_mdp ] || { log "compte du portail absent des secrets"; return 1; }
+  [ -r $OPERATEUR ] || { log "$OPERATEUR absent : rien à faire"; return 1; }
+  if [ -f $ETAT/refus ] && [ ! $S/portail_mdp -nt $ETAT/refus ] && [ ! $S/portail_identifiant -nt $ETAT/refus ]; then
+    log "compte refusé au dernier essai : rien de tenté avant un changement de portail_identifiant ou portail_mdp"; return 1
+  fi
+  touch $ETAT/dernier-essai
+  # shellcheck source=/dev/null
+  . $OPERATEUR
+  local r=0; portail_connexion || r=$?
+  case $r in
+    0) rm -f $ETAT/refus ;;
+    2) touch $ETAT/refus; log "compte refusé par le portail"
+       ntfy "Portail captif : compte refusé" "Le portail refuse l'identifiant ou le mot de passe : la reconnexion automatique est arrêtée. Mettre à jour /etc/homelab/secrets/portail_mdp (ou portail_identifiant)." high
+       return 1 ;;
+    *) log "connexion au portail impossible (code $r)"; return 1 ;;
+  esac
+  sleep 5; internet || { log "connexion envoyée, mais Internet ne passe toujours pas"; return 1; }
+}
+
+verifier() {
+  if internet; then
+    if [ -f $ETAT/coupure ]; then   # coupure finie (reconnexion par ce script, ou par la page du portail)
+      local debut fin; debut=$(cat $ETAT/coupure); fin=$(date +%s); rm -f $ETAT/coupure
+      echo "$(date -d @"$debut" '+%F %H:%M') → $(date '+%H:%M') : coupure de $(( (fin - debut + 59) / 60 )) min" >> $JOURNAL
+    fi
+    return 0
+  fi
+  [ -f $ETAT/coupure ] || { date +%s > $ETAT/coupure; log "Internet coupé : reconnexion au portail captif"; }
+  # au plus un essai toutes les 5 minutes (sauf le premier) pour ne pas harceler le portail
+  [ -f $ETAT/dernier-essai ] && [ $(( $(date +%s) - $(stat -c %Y $ETAT/dernier-essai) )) -lt 300 ] \
+    && [ "$(stat -c %Y $ETAT/dernier-essai)" -ge "$(cat $ETAT/coupure)" ] && return 0
+  if connecter; then
+    local debut; debut=$(cat $ETAT/coupure); rm -f $ETAT/coupure
+    local min=$(( ($(date +%s) - debut + 59) / 60 ))
+    echo "$(date -d @"$debut" '+%F %H:%M') → $(date '+%H:%M') : coupure de $min min, reconnecté automatiquement" >> $JOURNAL
+    log "reconnecté au portail captif après $min min"
+    ntfy "Portail captif" "Le portail de la résidence avait coupé Internet ; reconnecté automatiquement après $min min."
+  fi
+}
+
+etat() {
+  if internet; then echo "Internet : passe"; else echo "Internet : coupé$( [ -f $ETAT/coupure ] && echo " depuis $(date -d @"$(cat $ETAT/coupure)" '+%d/%m %H:%M')")"; fi
+  [ -f $ETAT/refus ] && echo "Compte REFUSÉ au dernier essai : mettre à jour /etc/homelab/secrets/portail_mdp"
+  echo "Dernières coupures :"; tail -8 $JOURNAL 2>/dev/null | sed 's/^/  /' || true
+  [ -s $JOURNAL ] || echo "  aucune"
+}
+
+[ "$(id -u)" = 0 ] || { echo "À lancer avec sudo." >&2; exit 1; }
+install -d -m 700 $ETAT
+case "${1:-verifier}" in
+  verifier)  verifier; exit 0 ;;
+  connecter) connecter ;;
+  etat)      etat ;;
+  *)         sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

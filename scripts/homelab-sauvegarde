@@ -1,0 +1,52 @@
+#!/bin/bash
+# Sauvegarde quotidienne : bases (à chaud, cohérentes), configurations, données des services.
+set -euo pipefail
+. /etc/homelab/homelab.env
+DEST=${BACKUP_DIR:-/var/backups/homelab}; KEEP=${BACKUP_KEEP:-7}
+d=$DEST/$(date +%F_%H%M); install -d -m 700 "$DEST" "$d"
+occ() { docker exec -u www-data nextcloud php occ "$@" >/dev/null; }
+trap 'docker ps -q -f name=^nextcloud$ | grep -q . && occ maintenance:mode --off || true' EXIT
+
+# Nextcloud : base + fichiers dans le même instant (mode maintenance). En veille, rien n'a changé depuis son arrêt :
+# on reprend l'export de la veille plutôt que de le réveiller.
+if docker ps -q -f name=^nextcloud$ | grep -q .; then
+  occ maintenance:mode --on
+  docker exec nextcloud-db sh -c 'exec mariadb-dump -uroot -p"$(cat /run/secrets/nc_db_root_password)" --single-transaction --databases nextcloud' | gzip > "$d/nextcloud-db.sql.gz"
+  occ maintenance:mode --off
+else
+  prec=$(ls -1d "$DEST"/20*/ | sort | grep -v "^$d/$" | tail -1)
+  [ -f "$prec/nextcloud-db.sql.gz" ] && cp -a "$prec/nextcloud-db.sql.gz" "$d/"
+fi
+rsync -a --delete /srv/homelab/nextcloud/data/ "$DEST/nextcloud-data/"
+
+# Immich : base + photos originales (miniatures et vidéos converties se régénèrent)
+docker exec immich-db pg_dump -U immich immich | gzip > "$d/immich-db.sql.gz"
+rsync -a --delete --exclude thumbs/ --exclude encoded-video/ /srv/homelab/immich/library/ "$DEST/immich-library/"
+
+# autres bases
+for db in uptime-kuma/kuma.db ntfy/user.db netalertx/db/app.db; do
+  [ -f "/srv/homelab/$db" ] && sqlite3 "/srv/homelab/$db" ".backup '$d/$(echo "$db" | tr / _)'"
+done
+
+# configurations et petites données
+tar czf "$d/fichiers.tgz" --exclude='*.sqlite3*' --exclude='*.db' --exclude='*.db-*' \
+  --exclude='Cache' --exclude='Logs' --exclude='Crash Reports' \
+  /etc/homelab /opt/homelab /srv/homelab/portainer \
+  /srv/homelab/homepage /srv/homelab/stirling-pdf/configs /srv/homelab/dozzle /srv/homelab/netalertx/config \
+  /srv/homelab/nextcloud/html/config 2>/dev/null || [ $? -eq 1 ]
+
+# routeur GL.iNet : configuration complète (réservations, Wi-Fi, DNS), pour le remettre en état après une réinitialisation
+# (Système → Sauvegarde/Restauration dans son interface). Mot de passe lu dans les secrets, clé d'hôte épinglée.
+ap=$(mktemp); printf '#!/bin/sh\ncat /etc/homelab/secrets/routeur_root\n' > "$ap"; chmod 700 "$ap"
+SSH_ASKPASS=$ap SSH_ASKPASS_REQUIRE=force timeout 60 ssh -n -o UserKnownHostsFile=/etc/homelab/routeur.known_hosts \
+  -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAuthentication=no root@192.168.8.1 'sysupgrade -b -' \
+  > "$d/routeur-glinet.tar.gz" 2>/dev/null
+gzip -tq "$d/routeur-glinet.tar.gz" 2>/dev/null || logger -t homelab-sauvegarde "configuration du routeur non copiée"
+rm -f "$ap"
+
+# Home Assistant : dernière sauvegarde automatique de la VM (faite par HA à 3 h, chiffrée,
+# clé dans /etc/homelab/secrets/ha_backup_key) ; un échec n'empêche pas le reste de la sauvegarde
+homelab-sauvegarde-ha "$d/home-assistant.tar" >/dev/null || logger -t homelab-sauvegarde "sauvegarde Home Assistant non copiée"
+
+ls -1d "$DEST"/20*/ | sort | head -n -"$KEEP" | xargs -r rm -rf
+logger -t homelab-sauvegarde "sauvegarde OK : $d ($(du -sh "$d" | cut -f1))"

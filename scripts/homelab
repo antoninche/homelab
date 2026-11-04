@@ -1,0 +1,109 @@
+#!/bin/bash
+# Gestion du homelab.
+#   homelab secrets   crée les mots de passe manquants dans /etc/homelab/secrets
+#   homelab render    génère la config nginx et Homepage à partir du domaine (/etc/homelab/homelab.env)
+#   homelab up        démarre toutes les stacks        homelab down   arrête tout
+#   homelab maj       met à jour les images et applique  homelab status état des conteneurs
+set -euo pipefail
+. /etc/homelab/homelab.env
+H=/opt/homelab
+S=/etc/homelab/secrets
+STACKS="socket-proxy proxy homepage uptime-kuma portainer dozzle glances netalertx ntfy immich it-tools"
+# services démarrés à la demande par systemd (socket homelab-pdf) : créés à l'arrêt, jamais lancés par « up »
+ONDEMAND="stirling-pdf nextcloud kiwix ia jellyfin"   # en veille, démarrés à la première visite (homelab-pdf, -cloud, -wiki, -ia, -films)
+
+# mot de passe aléatoire avec au moins une minuscule, une majuscule et un chiffre
+gen() {
+  local p
+  while :; do
+    p=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-28)
+    [[ $p =~ [a-z] && $p =~ [A-Z] && $p =~ [0-9] ]] && { printf '%s' "$p"; return; }
+  done
+}
+# les fichiers sont lisibles dans les conteneurs ; le dossier 700 les protège sur l'hôte
+secret() { [ -s "$S/$1" ] || printf '%s%s' "$(gen)" "${2:-}" > "$S/$1"; chmod 644 "$S/$1"; }
+envfile() { umask 077; cat > "$S/$1"; chmod 600 "$S/$1"; }
+
+cmd_secrets() {
+  install -d -m 700 "$S"
+  for s in nc_admin_password nc_db_password nc_db_root_password nc_redis_password \
+           portainer_admin dozzle_admin stirling_admin uptime_admin \
+           immich_admin immich_db_password ntfy_admin ha_admin ha_ssh restic_password jellyfin_admin; do secret "$s"; done
+  # jetons des sondes « push » d'Uptime Kuma (tâches planifiées, Tailscale)
+  for s in sauvegarde certs maj duckdns tailscale onedrive image; do secret "kuma_push_$s"; done
+  secret noc_admin; secret netalertx_admin; secret netalertx_api   # salle de contrôle (nginx), NetAlertX (interface, API)
+  printf 'requirepass %s\nsave ""\nappendonly no\n' "$(cat $S/nc_redis_password)" > "$S/nc_redis.conf"; chmod 644 "$S/nc_redis.conf"
+  envfile stirling.env <<EOF
+SECURITY_INITIALLOGIN_USERNAME=admin
+SECURITY_INITIALLOGIN_PASSWORD=$(cat $S/stirling_admin)
+EOF
+  envfile immich.env <<EOF
+DB_PASSWORD=$(cat $S/immich_db_password)
+POSTGRES_PASSWORD=$(cat $S/immich_db_password)
+EOF
+  cat > /etc/homelab/IDENTIFIANTS.txt <<EOF
+# Identifiants initiaux du homelab - fichier lisible par root uniquement
+Accueil        https://$DOMAIN            (pas de compte)
+Nextcloud      https://cloud.$DOMAIN      admin / $(cat $S/nc_admin_password)
+Immich         https://photos.$DOMAIN     admin@$DOMAIN / $(cat $S/immich_admin)
+Stirling-PDF   https://pdf.$DOMAIN        admin / $(cat $S/stirling_admin)   (démarre à la demande, ≈ 1 min)
+IT-Tools       https://outils.$DOMAIN     (pas de compte)
+Films          https://films.$DOMAIN      admin / $(cat $S/jellyfin_admin)   (Jellyfin ; démarre à la demande, ≈ 20 s)
+Wikipédia      https://wiki.$DOMAIN       (pas de compte)   (Kiwix ; démarre à la demande)
+IA locale      https://ia.$DOMAIN         (pas de compte)   (démarre à la demande, ≈ 15 s)
+Cartes         https://cartes.$DOMAIN     (pas de compte)
+Uptime Kuma    https://status.$DOMAIN     admin / $(cat $S/uptime_admin)
+ntfy           https://ntfy.$DOMAIN       admin / $(cat $S/ntfy_admin)   (sujet : homelab)
+Tailscale      https://login.tailscale.com/admin   votre compte Tailscale (accès à distance)
+Portainer      https://portainer.$DOMAIN  admin / $(cat $S/portainer_admin)
+Dozzle         https://logs.$DOMAIN       admin / $(cat $S/dozzle_admin)
+Salle contrôle https://noc.$DOMAIN        (pas de mot de passe)
+NetAlertX      https://reseau.$DOMAIN     mot de passe : $(cat $S/netalertx_admin)
+Home Assistant https://ha.$DOMAIN         admin / $(cat $S/ha_admin)
+HA app SSH     ssh root@<IP de la VM HA>  mot de passe : $(cat $S/ha_ssh)
+EOF
+  chmod 600 /etc/homelab/IDENTIFIANTS.txt
+}
+
+cmd_render() {
+  mkdir -p "$H/proxy/conf.d" /srv/homelab/homepage/config
+  rm -f "$H/proxy/conf.d/"*.conf
+  for t in "$H"/proxy/templates/*.tpl; do
+    sed "s/@DOMAIN@/$DOMAIN/g" "$t" > "$H/proxy/conf.d/$(basename "${t%.tpl}")"
+  done
+  for t in "$H"/homepage/config/*.yaml "$H"/homepage/config/*.css; do
+    [ -e "$t" ] || continue
+    sed "s/@DOMAIN@/$DOMAIN/g" "$t" > "/srv/homelab/homepage/config/$(basename "$t")"
+  done
+  # images de la page d'accueil (fond, icône), servies sous /images/
+  install -d /srv/homelab/homepage/images && cp -a "$H"/homepage/images/. /srv/homelab/homepage/images/
+  chown -R 1000:1000 /srv/homelab/homepage/config /srv/homelab/homepage/images
+  # salle de contrôle : jeton de lecture de l'API NetAlertX, tiré des secrets
+  # jeton fixe de l'API NetAlertX (sinon il en régénère un à chaque relecture de sa configuration)
+  tok=$(cat "$S/netalertx_api"); c=/srv/homelab/netalertx/config/app.conf
+  if [ -f "$c" ] && ! grep -q "^API_TOKEN='$tok'" "$c"; then
+    sed -i '/^API_TOKEN=/d' "$c"; echo "API_TOKEN='$tok'" >> "$c"
+  fi
+  ( umask 077; printf 'proxy_set_header Authorization "Bearer %s";\n' "$tok" > "$H/proxy/snippets/netalertx-api.conf" )
+  install -d -m 755 "$H/proxy/site/noc/data"
+  if docker ps -q -f name='^proxy$' | grep -q .; then docker exec proxy nginx -t -q && docker exec proxy nginx -s reload; fi
+}
+
+for_stacks() { for s in $1; do echo "== $s"; (cd "$H/$s" && docker compose "${@:2}"); done; }
+
+case "${1:-}" in
+  secrets) cmd_secrets ;;
+  render)  cmd_render ;;
+  up)      for_stacks "$STACKS" up -d --remove-orphans; for_stacks "$ONDEMAND" up --no-start ;;
+  down)    for_stacks "$(echo $STACKS $ONDEMAND | tr ' ' '\n' | tac | tr '\n' ' ')" down ;;
+  maj)
+    for_stacks "$STACKS $ONDEMAND" pull -q
+    for_stacks "$STACKS" up -d --remove-orphans
+    for_stacks "$ONDEMAND" up --no-start
+    docker ps -q -f name=^nextcloud$ | grep -q . && docker exec -u www-data nextcloud php occ app:update --all || true
+    docker image prune -f
+    homelab-immich verifier || true   # Immich : version figée, notification si une nouvelle est sortie
+    ;;
+  status)  docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}' ;;
+  *) sed -n '2,7p' "$0"; exit 1 ;;
+esac

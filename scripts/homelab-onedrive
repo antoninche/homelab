@@ -1,0 +1,474 @@
+#!/bin/bash
+# Sauvegardes du homelab vers OneDrive (compte de la fac), en double :
+#   1. chaque nuit, une copie complète du système, chiffrée et dédupliquée (restic, dossier « quotidienne ») :
+#      on peut revenir à chacune des 7 dernières nuits, des 5 dernières semaines et des 12 derniers mois ;
+#   2. chaque dimanche, une image du disque prête à flasher avec Raspberry Pi Imager (dossier « images », 2 gardées).
+# Les deux partent d'un miroir local du disque (pi.img), mis à jour en deux passes : à chaud, puis environ une minute
+# avec les conteneurs en pause et la VM Home Assistant suspendue, pour que les bases et le disque de la VM soient
+# copiés dans un état cohérent. Le dossier « restauration » de OneDrive contient ce script, l'accès OneDrive et la
+# clé restic : de quoi tout reconstruire sans le Pi et sans taper de mot de passe (voir LISEZMOI.txt).
+#
+# Usage : homelab-onedrive quotidienne          miroir + copie de la nuit + kit de restauration (minuteur, 04:15)
+#         homelab-onedrive image                image du disque vers OneDrive (minuteur, dimanche 05:00)
+#         homelab-onedrive envoyer              reprendre l'envoi d'une image déjà compressée
+#         homelab-onedrive etat                 copies, images et place utilisée
+#         homelab-onedrive restaurer <disque|fichier.img> [instantané]
+#                                               écrit un disque démarrable à partir d'une copie de nuit
+#         homelab-onedrive recuperer <chemin> [instantané]
+#                                               copie un fichier ou dossier d'une copie de nuit dans /root
+#         homelab-onedrive kit                  renvoie tout de suite le kit de restauration et les identifiants
+#                                               (après un changement de mot de passe, par exemple)
+#         homelab-onedrive essai                essai de restauration complet (minuteur, le 8 de chaque mois) :
+#                                               image vérifiée, copie de nuit restaurée puis comparée au miroir
+#         homelab-onedrive agrandir             (au démarrage d'un système restauré) partition système → tout le disque
+set -euo pipefail
+
+DOSSIER=Homelab-sauvegardes            # dossier dans OneDrive
+BUREAU=Bureau                          # Bureau du Mac, synchronisé par OneDrive : copie des identifiants
+QUOTA_GO=300                           # plafond d'espace OneDrive pour les sauvegardes
+IMAGES_GARDEES=2
+TRAVAIL=/var/lib/homelab-onedrive
+IMG=$TRAVAIL/pi.img
+MIROIR=$TRAVAIL/miroir
+DRAPEAU=/etc/homelab/agrandir-au-demarrage
+ICI=$(dirname "$(readlink -f "$0")")
+# accès OneDrive et clé restic : ceux du Pi, ou ceux posés à côté du script (dossier « restauration » de OneDrive)
+for f in /etc/homelab/rclone.conf "$ICI/rclone.conf"; do [ -f "$f" ] && export RCLONE_CONFIG=$f && break; done
+for f in /etc/homelab/secrets/restic_password "$ICI/restic.key"; do [ -f "$f" ] && export RESTIC_PASSWORD_FILE=$f && break; done
+export RESTIC_REPOSITORY="rclone:onedrive:$DOSSIER/quotidienne"
+export RESTIC_CACHE_DIR=/var/cache/restic
+# débit d'envoi : sans limite (choix du 3 nov. 2026) ; pour en remettre une, par exemple « 08:00,1M 23:30,off »
+export RCLONE_BWLIMIT=${RCLONE_BWLIMIT-off}
+# OneDrive coupe parfois des envois en HTTP/2 (« stream CANCEL », 3 nov. 2026) : HTTP/1.1 et plus de tentatives
+export RCLONE_DISABLE_HTTP2=true RCLONE_LOW_LEVEL_RETRIES=20
+
+log() { echo "$*"; }
+alerte() {  # alerte <titre> <message> [priorité] : notification ntfy, sujet homelab
+  local t; t=$(cat /etc/homelab/secrets/ntfy_token 2>/dev/null) || return 0
+  curl -fsS -m 20 -H "Authorization: Bearer $t" -H "Title: $1" -H "Priority: ${3:-default}" -H "Tags: floppy_disk" \
+    --data-binary "$2" http://127.0.0.1:8011/homelab >/dev/null || true
+}
+verrou() { exec 9>/run/lock/homelab-onedrive.lock; flock 9; }   # une seule opération à la fois sur le miroir
+go() { awk -v o="$1" 'BEGIN { printf "%.1f Go", o / 1e9 }'; }
+
+# ---------- miroir local du disque (image au format du disque du Pi) ----------
+LOOP=""; GELES=""; VMS=""
+EXCLUS=$TRAVAIL/exclus.txt
+# Le miroir porte ses propres identifiants de disque : monté sur le Pi, il ne doit pas se confondre avec le vrai
+# disque (même PARTUUID = risque de voir /boot/firmware démonté). L'identifiant d'origine est remis dans l'image
+# envoyée à OneDrive, au moment de la compression (flux_image).
+ID_MIROIR=0x6d697272
+# Données qui se retéléchargent (« sudo homelab-survie telecharger ») : pas de place prise dans OneDrive pour elles.
+RETELECHARGEABLES="/srv/homelab/kiwix /srv/homelab/ia/modeles /srv/homelab/cartes /srv/homelab/jellyfin/cache"
+
+attacher() { LOOP=$(losetup -fP --show "$IMG"); udevadm settle; }
+monter() {
+  install -d -m 700 "$MIROIR"
+  printf '%s\n' /swapfile /swapfile2 "/boot/firmware/*" "$TRAVAIL/" /var/cache/restic/ "/var/cache/apt/archives/*.deb" \
+    "/tmp/*" "/var/tmp/*" > "$EXCLUS"
+  for d in $RETELECHARGEABLES; do echo "$d/*"; done >> "$EXCLUS"   # dossiers gardés, contenu exclu
+  mount "${LOOP}p2" "$MIROIR"
+  install -d "$MIROIR/boot/firmware"
+  mount "${LOOP}p1" "$MIROIR/boot/firmware"
+}
+demonter() {
+  mountpoint -q "$MIROIR/boot/firmware" 2>/dev/null && umount "$MIROIR/boot/firmware"
+  mountpoint -q "$MIROIR" 2>/dev/null && umount "$MIROIR"
+  [ -n "$LOOP" ] && losetup -d "$LOOP"; LOOP=""
+}
+geler() {  # pause des conteneurs et suspension de la VM : plus rien n'écrit pendant la dernière passe
+  GELES=$(docker ps -q --filter status=running | tr '\n' ' ')
+  [ -n "$GELES" ] && docker pause $GELES >/dev/null
+  for vm in $(virsh list --name --state-running); do virsh suspend "$vm" >/dev/null && VMS+=" $vm"; done
+  sync
+}
+degeler() {
+  for vm in $VMS; do virsh resume "$vm" >/dev/null || true; done; VMS=""
+  [ -n "$GELES" ] && { docker unpause $GELES >/dev/null 2>&1 || true; }; GELES=""
+}
+finir() { degeler; demonter; }
+
+taille_systeme() {  # secteurs de 512 o pour la partition système de l'image : occupé + 15 % + 3 Gio, au Mio près
+  # (les fichiers d'échange comptent : ils sont recréés dans le miroir ; le miroir, le cache restic et les données
+  # retéléchargeables non)
+  local occupe exclu
+  occupe=$(df -B1 --output=used / | tail -1)
+  # shellcheck disable=SC2086
+  exclu=$( (du -scxB1 "$TRAVAIL" /var/cache/restic /tmp /var/tmp $RETELECHARGEABLES 2>/dev/null || true) | tail -1 | cut -f1)
+  echo $(( ((occupe - exclu) * 115 / 100 + 3 * 1024 ** 3) / 512 / 2048 * 2048 ))
+}
+
+preparer_image() {  # crée l'image (mêmes partitions et identifiants que le disque du Pi) ou l'agrandit si besoin
+  local besoin actuel
+  besoin=$(taille_systeme)
+  if [ ! -f "$IMG" ]; then
+    # mêmes emplacements de partitions que le disque du Pi (lus dans /sys, en secteurs de 512 o)
+    local p1 p2
+    p1=/sys/class/block/$(basename "$(findmnt -no SOURCE /boot/firmware)")
+    p2=/sys/class/block/$(basename "$(findmnt -no SOURCE /)")
+    log "Nouveau miroir : $(go $((besoin * 512))) pour le système"
+    install -d -m 700 "$TRAVAIL"
+    truncate -s $(( ($(cat "$p2/start") + besoin) * 512 )) "$IMG"
+    sfdisk -q "$IMG" <<EOF
+label: dos
+label-id: $ID_MIROIR
+start=$(cat "$p1/start"), size=$(cat "$p1/size"), type=c
+start=$(cat "$p2/start"), size=$besoin, type=83
+EOF
+    attacher
+    mkfs.vfat -F 32 -n bootfs "${LOOP}p1" >/dev/null
+    mkfs.ext4 -q -L rootfs "${LOOP}p2"
+    return
+  fi
+  attacher
+  actuel=$(cat "/sys/class/block/$(basename "$LOOP")p2/size")
+  if [ "$besoin" -gt "$actuel" ]; then
+    log "Agrandissement du miroir : $(go $((actuel * 512))) → $(go $((besoin * 512)))"
+    losetup -d "$LOOP"; LOOP=""
+    truncate -s +$(( (besoin - actuel) * 512 )) "$IMG"
+    echo ", +" | sfdisk -q -N 2 "$IMG"
+    attacher
+    e2fsck -fy "${LOOP}p2" >/dev/null || [ $? -le 1 ]
+    resize2fs "${LOOP}p2" >/dev/null
+  fi
+}
+
+copier() {  # une passe de copie du système vers le miroir (fichiers modifiés seulement, gros fichiers par blocs)
+  local r=0
+  rsync -aHAXx --numeric-ids --delete --inplace --no-whole-file --exclude-from="$EXCLUS" / "$MIROIR/" || r=$?
+  [ $r -eq 0 ] || [ $r -eq 24 ] || return $r   # 24 : fichiers disparus pendant la copie à chaud, sans gravité
+  rsync -rtD --delete --modify-window=1 /boot/firmware/ "$MIROIR/boot/firmware/"
+}
+
+miroir() {
+  docker unpause $(docker ps -q --filter status=paused) >/dev/null 2>&1 || true   # au cas où un arrêt brutal les aurait laissés en pause
+  preparer_image
+  monter
+  local t0 t1; t0=$(date +%s)
+  copier                                   # passe 1, à chaud : le gros du travail
+  t1=$(date +%s)
+  geler
+  export -f copier; export MIROIR EXCLUS
+  timeout 900 bash -c copier               # passe 2, figée (15 min au plus : les services repartent quoi qu'il arrive)
+  degeler
+  log "Miroir à jour en $(( $(date +%s) - t0 )) s, dont $(( $(date +%s) - t1 )) s avec les services figés"
+  # le système restauré doit retrouver ses fichiers d'échange et s'étendre à tout son disque au premier démarrage
+  for s in /swapfile /swapfile2; do
+    [ -f "$s" ] && [ ! -f "$MIROIR$s" ] && fallocate -l "$(stat -c %s "$s")" "$MIROIR$s" && chmod 600 "$MIROIR$s" && mkswap -q "$MIROIR$s"
+  done
+  date -Iseconds > "$MIROIR$DRAPEAU"
+}
+
+# ---------- copie de la nuit (restic) ----------
+copie_nuit() {
+  # le dépôt n'est créé que si OneDrive répond sans lui : une coupure réseau ne doit pas passer pour un dépôt absent
+  local r=0 liste; liste=$(rclone lsf --files-only --include config "onedrive:$DOSSIER/quotidienne" 2>/dev/null) || r=$?
+  case $r in
+    0) [ "$liste" = config ] || { log "Création du dépôt restic"; restic init --repository-version 2 >/dev/null; } ;;
+    3) log "Création du dépôt restic"; restic init --repository-version 2 >/dev/null ;;   # dossier absent
+    *) log "OneDrive injoignable (rclone, code $r)"; return 1 ;;
+  esac
+  restic backup --quiet --host homelab --tag quotidienne "$MIROIR"
+  restic forget --quiet --host homelab --keep-daily 7 --keep-weekly 5 --keep-monthly 12 \
+    $( [ "$(date +%u)" = 7 ] && echo --prune )   # nettoyage du dépôt le dimanche seulement
+  # le dimanche : structure du dépôt, et relecture d'un douzième des données (tout est relu en 12 semaines)
+  [ "$(date +%u)" = 7 ] && restic check --quiet --read-data-subset="$(( 10#$(date +%V) % 12 + 1 ))/12"
+  return 0
+}
+
+wifi() {  # Wi-Fi de l'appart, lu dans la dernière copie de la configuration du routeur (homelab-sauvegarde)
+  local t; t=$(ls -1 /var/backups/homelab/20*/routeur-glinet.tar.gz 2>/dev/null | sort | tail -1)
+  [ -n "$t" ] || { echo "Wi-Fi de l'appart       (pas encore de copie de la configuration du routeur)"; return 0; }
+  tar -xzOf "$t" etc/config/wireless | awk -F"'" '
+    function sortie() { if (ap && actif && ssid != "" && !vu[ssid]++) printf "Wi-Fi de l\047appart      « %s »   mot de passe : %s\n", ssid, cle }
+    /^config/            { sortie(); ap = 0; actif = 1; ssid = ""; cle = "" }
+    /option mode /       { ap = ($2 == "ap") }
+    /option disabled /   { actif = ($2 == "0") }
+    /option ssid /       { ssid = $2 }
+    /option key /        { cle = $2 }
+    END                  { sortie() }'
+}
+
+identifiants() {  # tous les accès du homelab, en clair (choix assumé : sur le Bureau du Mac et dans les sauvegardes)
+  local s
+  echo "# Homelab : identifiants et clés"
+  echo "# Généré par homelab-onedrive le $(date '+%d/%m/%Y à %H:%M'), réécrit chaque nuit : ne pas modifier ce fichier."
+  echo "# Copies : Bureau du Mac, OneDrive/$DOSSIER, et dans chaque sauvegarde."
+  echo
+  echo "== Machines"
+  echo "Raspberry Pi (SSH)     ssh pi depuis le Mac (clé ci-dessous, sans mot de passe) ; ssh root@pi pour root"
+  echo "                       adresses : 192.168.8.10 (à l'appart) ou 100.64.0.10 (Tailscale)"
+  echo "Raspberry Pi (compte)  admin / (mot de passe local)   (clavier-écran branchés au Pi ; SSH n'accepte plus les mots de passe ; sudo sans mot de passe)"
+  echo "Routeur GL.iNet        http://192.168.8.1 (interface) ou ssh root@192.168.8.1   mot de passe : $(cat /etc/homelab/secrets/routeur_root 2>/dev/null || echo '?')"
+  wifi
+  echo "Portail captif        $(cat /etc/homelab/secrets/portail_identifiant 2>/dev/null || echo '?') / $(cat /etc/homelab/secrets/portail_mdp 2>/dev/null || echo '?')   (Wi-Fi de la résidence ; reconnexion automatique : homelab-portail)"
+  echo "OneDrive (sauvegardes) compte de la fac prenom.nom@universite.fr (connexion Microsoft habituelle)"
+  echo
+  echo "== Clé SSH du Mac (~/.ssh/homelab)"
+  echo "# Sur un autre ordinateur : copier le bloc dans ~/.ssh/homelab, puis chmod 600 ~/.ssh/homelab"
+  echo "# et se connecter avec : ssh -i ~/.ssh/homelab admin@100.64.0.10"
+  cat /etc/homelab/secrets/ssh_cle_mac 2>/dev/null
+  echo
+  echo "== Services (identifiants de départ)"
+  grep -v '^#' /etc/homelab/IDENTIFIANTS.txt
+  echo
+  echo "== Clés des sauvegardes"
+  echo "restic (copies de nuit, dossier quotidienne)   $(cat "$RESTIC_PASSWORD_FILE")"
+  echo "Home Assistant (sauvegardes chiffrées de HA)   $(cat /etc/homelab/secrets/ha_backup_key)"
+  echo
+  echo "== Tous les secrets du homelab (/etc/homelab/secrets)"
+  for s in /etc/homelab/secrets/*; do
+    [ "$s" = /etc/homelab/secrets/ssh_cle_mac ] && continue   # déjà plus haut
+    if [ "$(wc -l < "$s")" -le 1 ]; then printf '%-28s %s\n' "$(basename "$s")" "$(cat "$s")"
+    else echo "--- $(basename "$s")"; cat "$s"; fi
+  done
+}
+
+kit() {  # dossier « restauration » de OneDrive + identifiants : de quoi tout reconstruire sans le Pi
+  local k=$TRAVAIL/kit
+  rm -rf "$k"; install -d -m 700 "$k/restauration"
+  cp /usr/local/sbin/homelab-onedrive "$k/restauration/"
+  cp "$(command -v restic)" "$k/restauration/restic"      # version récente (restauration qui reprend après une coupure)
+  cp "$RCLONE_CONFIG" "$k/restauration/rclone.conf"      # jeton OneDrive, renouvelé chaque nuit
+  cp "$RESTIC_PASSWORD_FILE" "$k/restauration/restic.key"
+  cp /opt/homelab/RESTAURATION.txt "$k/LISEZMOI.txt"
+  cp /opt/homelab/proxy/site/doc/index.html "$k/Documentation.html"   # lisible sans le Pi : télécharger et ouvrir
+  identifiants > "$k/IDENTIFIANTS.txt"
+  rclone copy --checksum "$k" "onedrive:$DOSSIER"
+  rclone copyto --checksum "$k/IDENTIFIANTS.txt" "onedrive:$BUREAU/Homelab-identifiants.txt"
+  rm -rf "$k"
+}
+
+# ---------- place utilisée dans OneDrive ----------
+occupe() { rclone size --json "onedrive:$DOSSIER" | python3 -c 'import json, sys; print(json.load(sys.stdin)["bytes"])'; }
+images() { rclone lsf "onedrive:$DOSSIER/images" --include '*.img.xz' 2>/dev/null | sort; }
+quota() {
+  local o max=$((QUOTA_GO * 1000 ** 3))
+  o=$(occupe)
+  # au-delà du plafond : on retire les images les plus anciennes (on en garde toujours une)
+  while [ "$o" -gt "$max" ] && [ "$(images | wc -l)" -gt 1 ]; do
+    local vieille; vieille=$(images | head -1)
+    rclone deletefile "onedrive:$DOSSIER/images/$vieille"; rclone deletefile "onedrive:$DOSSIER/images/$vieille.sha256" || true
+    alerte "Sauvegardes OneDrive : plafond atteint" "Image $vieille retirée pour rester sous $QUOTA_GO Go." high
+    o=$(occupe)
+  done
+  [ "$o" -gt $((max * 9 / 10)) ] && alerte "Sauvegardes OneDrive : $(go "$o") utilisés" "Plafond fixé à $QUOTA_GO Go." high
+  echo "{\"octets\": $o, \"plafond\": $max, \"maj\": $(date +%s)}" > "$TRAVAIL/etat.json"
+  log "OneDrive : $(go "$o") utilisés sur $QUOTA_GO Go autorisés"
+}
+
+# ---------- image hebdomadaire ----------
+flux_image() {  # le miroir tel qu'il doit être flashé : avec l'identifiant de disque du Pi (4 octets à l'offset 440)
+  local id
+  id=$(sfdisk --disk-id "/dev/$(lsblk -no PKNAME "$(findmnt -no SOURCE /)")" | sed 's/^0x//')
+  head -c 440 "$IMG"
+  printf "$(echo "$id" | sed -E 's/(..)(..)(..)(..)/\\x\4\\x\3\\x\2\\x\1/')"
+  tail -c +445 "$IMG"
+}
+
+envoyer_images() {  # envoie les images compressées présentes sur le Pi (dont une tentative précédente interrompue)
+  local f
+  for f in "$TRAVAIL"/homelab-*.img.xz; do
+    [ -f "$f" ] && [ -f "$f.sha256" ] || continue
+    log "Envoi de $(basename "$f") ($(go "$(stat -c %s "$f")"))"
+    rclone copyto "$f" "onedrive:$DOSSIER/images/$(basename "$f")" \
+      && rclone copyto "$f.sha256" "onedrive:$DOSSIER/images/$(basename "$f").sha256" \
+      || { alerte "Image du Pi" "Envoi de $(basename "$f") interrompu ; il sera repris la prochaine fois." high; return 1; }
+    rm -f "$f" "$f.sha256"
+  done
+}
+
+trier_images() {  # garde les $IMAGES_GARDEES plus récentes dans OneDrive, puis vérifie le plafond
+  local n; n=$(images | wc -l)
+  images | head -n -"$IMAGES_GARDEES" | while read -r f; do
+    rclone deletefile "onedrive:$DOSSIER/images/$f"; rclone deletefile "onedrive:$DOSSIER/images/$f.sha256" || true
+  done
+  log "Images dans OneDrive : $(images | tr '\n' ' ')(sur $n avant tri)"
+  quota
+}
+
+image() {
+  verrou
+  envoyer_images || return 1   # d'abord ce qui n'est pas encore parti
+  [ -f "$IMG" ] || { trap finir EXIT; miroir; demonter; }
+  attacher; trap finir EXIT
+  e2fsck -fn "${LOOP}p2" >/dev/null 2>&1 || alerte "Image du Pi" "Le miroir présente des erreurs de système de fichiers : à vérifier." high
+  demonter
+  local nom tmp
+  nom="homelab-$(date +%F).img.xz"; tmp="$TRAVAIL/$nom"
+  log "Compression de l'image ($(go "$(stat -c %s "$IMG")") dont $(go $(( $(stat -c %b "$IMG") * 512 ))) utilisés)"
+  flux_image | nice -n 19 ionice -c 3 xz -T4 -3 > "$tmp"
+  (cd "$TRAVAIL" && sha256sum "$nom" > "$nom.sha256")
+  envoyer_images || return 1
+  trier_images
+}
+
+quotidienne() {
+  verrou
+  trap finir EXIT
+  miroir
+  copie_nuit
+  demonter
+  kit
+  quota
+}
+
+etat() {
+  echo "== Copies de nuit (restic)"; restic snapshots --host homelab --compact
+  echo "== Images (Raspberry Pi Imager)"; rclone lsl "onedrive:$DOSSIER/images" --include '*.img.xz'
+  echo "== Place"; rclone size "onedrive:$DOSSIER"
+}
+
+# ---------- restauration sur un disque neuf ----------
+restaurer() {
+  local cible=${1:?disque ou fichier .img cible} snap=${2:-latest} racine=/mnt/homelab-restauration fichier=""
+  [ "$(id -u)" = 0 ] || { echo "À lancer avec sudo"; exit 1; }
+  # restic du kit (version récente) de préférence à celui de Debian
+  [ -f "$ICI/restic" ] && install -m 755 "$ICI/restic" /usr/local/bin/restic
+  command -v restic >/dev/null && command -v rclone >/dev/null || { apt-get update -q && apt-get install -y -q restic rclone; }
+  export RCLONE_BWLIMIT=off   # restauration : tout le débit
+  [ -f "$RCLONE_CONFIG" ] && [ -f "$RESTIC_PASSWORD_FILE" ] || { echo "rclone.conf et restic.key doivent être à côté du script"; exit 1; }
+  local id; id=$(restic dump "$snap" "$MIROIR/etc/fstab" | grep -o 'PARTUUID=[0-9a-f]*-02' | cut -d= -f2 | cut -d- -f1)
+  if [ -b "$cible" ]; then
+    read -r -p "Tout le contenu de $cible ($(lsblk -dno SIZE,MODEL "$cible")) sera effacé. Taper OUI pour continuer : " ok
+    [ "$ok" = OUI ] || exit 1
+    wipefs -aq "$cible"
+  else   # fichier image (essai de restauration) : taille de la copie + 20 % + 2 Gio
+    fichier=$cible
+    local octets; octets=$(restic stats --json "$snap" | python3 -c 'import json, sys; print(json.load(sys.stdin)["total_size"])')
+    truncate -s $(( octets * 120 / 100 + 2 * 1024 ** 3 )) "$cible"
+    id=6d697273   # essai sur le Pi lui-même : identifiant distinct de son vrai disque
+  fi
+  sfdisk -q "$cible" <<EOF
+label: dos
+label-id: 0x$id
+start=8192, size=1048576, type=c
+start=1056768, type=83
+EOF
+  if [ -n "$fichier" ]; then cible=$(losetup -fP --show "$fichier"); fi
+  udevadm settle; partprobe "$cible" 2>/dev/null || true
+  local p=$cible; [[ $cible =~ [0-9]$ ]] && p=${cible}p
+  mkfs.vfat -F 32 -n bootfs "${p}1" >/dev/null
+  mkfs.ext4 -q -F -L rootfs "${p}2"
+  install -d "$racine"; mount "${p}2" "$racine"; install -d "$racine/boot/firmware"; mount "${p}1" "$racine/boot/firmware"
+  # en cas d'échec (coupure réseau pendant le téléchargement…), rien ne reste monté ni attaché
+  trap "umount -q '$racine/boot/firmware' '$racine' 2>/dev/null; ${fichier:+losetup -d '$cible' 2>/dev/null;} true" EXIT
+  log "Téléchargement et écriture de la copie $snap…"
+  # une coupure réseau n'oblige pas à tout reprendre : les fichiers déjà écrits et justes sont gardés (restic ≥ 0.17)
+  local n reprise=(); restic restore --help 2>/dev/null | grep -q -- '--overwrite' && reprise=(--overwrite if-changed)
+  for n in 1 2 3 4 5 6; do
+    restic restore "$snap" --target "$racine/.restauration" "${reprise[@]}" && break
+    [ $n = 6 ] && { log "Téléchargement impossible après 6 essais"; return 1; }
+    log "Téléchargement interrompu (essai $n sur 6) : reprise dans 5 minutes"; sleep 300
+  done
+  # restic garde le chemin complet du miroir : son contenu remonte à la racine (renommages sur la même partition),
+  # sauf les fichiers de démarrage, copiés sur leur partition
+  local src="$racine/.restauration$MIROIR"
+  ( shopt -s dotglob nullglob
+    cp -rT --preserve=timestamps "$src/boot/firmware" "$racine/boot/firmware"; rm -rf "$src/boot/firmware"
+    mv "$src"/boot/* "$racine/boot/" 2>/dev/null || true; rmdir "$src/boot"
+    rm -rf "$racine/lost+found"
+    mv "$src"/* "$racine/" )
+  rm -rf "$racine/.restauration"
+  sync; umount "$racine/boot/firmware" "$racine"
+  [ -n "$fichier" ] && losetup -d "$cible"
+  log "Terminé : $1 contient le système du $(restic snapshots --json "$snap" | python3 -c 'import json, sys; print(json.load(sys.stdin)[-1]["time"][:16].replace("T", " à "))')."
+}
+
+recuperer() {  # recuperer <chemin> [instantané] : copie un fichier ou dossier d'une copie de nuit, sans toucher au système
+  local chemin=${1:?chemin à récupérer, par exemple /srv/homelab/nextcloud/data} snap=${2:-latest} dest
+  dest=/root/recuperation-$(date +%F-%H%M)
+  restic restore "$snap" --include "$MIROIR$chemin" --target "$dest"
+  mkdir -p "$dest$(dirname "$chemin")"; mv "$dest$MIROIR$chemin" "$dest$chemin"; rm -rf "${dest:?}$TRAVAIL"
+  log "Récupéré dans $dest$chemin"
+}
+
+agrandir() {  # premier démarrage après restauration d'une image : la partition système prend tout le disque
+  local part disque num
+  part=$(findmnt -no SOURCE /); disque=/dev/$(lsblk -no PKNAME "$part"); num=$(cat "/sys/class/block/$(basename "$part")/partition")
+  growpart "$disque" "$num" || true      # « NOCHANGE » si elle occupe déjà tout le disque
+  resize2fs "$part"
+  rm -f "$DRAPEAU"
+}
+
+# ---------- essai de restauration (minuteur mensuel) ----------
+# Une sauvegarde ne vaut que si elle se restaure : la dernière image est téléchargée et comparée à son empreinte, la
+# dernière copie de nuit est restaurée dans un disque virtuel comme sur un SSD neuf, puis comparée au miroir dont elle
+# vient. S'y ajoute un bilan du SSD. Rapport : $TRAVAIL/essai-restauration.txt, notification, sonde Kuma.
+essai() {
+  local f=$TRAVAIL/essai.img r=$TRAVAIL/essai-restauration.txt ok=1 t0 t1 img ref sum n A B s usure arrets erreurs avant
+  t0=$(date +%s)
+  exec > >(tee "$r") 2>&1
+  echo "Essai de restauration du $(date '+%d/%m/%Y à %H:%M')"
+  restic self-update >/dev/null 2>&1 || true   # binaire officiel : mise à jour signée, validée par l'essai lui-même
+  echo "restic $(restic version | cut -d' ' -f2)"
+
+  # 1. dernière image du dimanche, téléchargée en entier
+  img=$(images | tail -1) || true
+  if [ -n "$img" ]; then
+    ref=$(rclone cat "onedrive:$DOSSIER/images/$img.sha256" | cut -d' ' -f1) || true
+    sum=$(rclone cat "onedrive:$DOSSIER/images/$img" | sha256sum | cut -d' ' -f1) || true
+    if [ -n "$ref" ] && [ "$ref" = "$sum" ]; then echo "Image $img : intacte (empreinte vérifiée)"
+    else echo "Image $img : EMPREINTE DIFFÉRENTE"; ok=0; fi
+  else echo "Image : AUCUNE dans OneDrive"; ok=0; fi
+
+  # 2. dernière copie de nuit, écrite dans un fichier comme sur un SSD neuf (processus à part : il s'arrête à la
+  #    première erreur, et démonte tout en sortant)
+  t1=$(date +%s); rm -f "$f"
+  if bash "$0" restaurer "$f"; then
+    echo "Copie de nuit : restaurée en $(( ($(date +%s) - t1) / 60 )) min"
+    # 3. comparaison avec le miroir, figé pendant ce temps
+    verrou
+    A=$(losetup -rfP --show "$f"); B=$(losetup -rfP --show "$IMG"); udevadm settle
+    trap "umount -q /mnt/essai-a/boot/firmware /mnt/essai-a /mnt/essai-b/boot/firmware /mnt/essai-b 2>/dev/null; losetup -d '$A' '$B' 2>/dev/null; rm -f '$f'" EXIT
+    install -d /mnt/essai-a /mnt/essai-b
+    mount -o ro,noload "${A}p2" /mnt/essai-a; mount -o ro "${A}p1" /mnt/essai-a/boot/firmware
+    mount -o ro,noload "${B}p2" /mnt/essai-b; mount -o ro "${B}p1" /mnt/essai-b/boot/firmware
+    n=$( { rsync -aHAXn --numeric-ids --delete --itemize-changes /mnt/essai-a/ /mnt/essai-b/ 2>&1 || true; } \
+        | { grep -vE '^\.d\.\.t|lost\+found' || true; } | tee "$TRAVAIL/essai-differences.txt" | wc -l)
+    echo "Différences avec le miroir : $n fichier(s)"; head -15 "$TRAVAIL/essai-differences.txt" | sed 's/^/  /'
+    [ "$n" -le 50 ] || ok=0
+    if diff -rq /mnt/essai-a/boot/firmware /mnt/essai-b/boot/firmware >/dev/null; then echo "Partition de démarrage : identique"
+    else echo "Partition de démarrage : DIFFÉRENTE"; ok=0; fi
+    if qemu-img check -U /mnt/essai-a/var/lib/libvirt/images/haos.qcow2 2>&1 | grep -q "No errors"; then echo "Disque de Home Assistant : sain"
+    else echo "Disque de Home Assistant : ERREURS"; ok=0; fi
+    s=$(ls -d /mnt/essai-a/var/backups/homelab/20* 2>/dev/null | tail -1) || true
+    if [ -n "$s" ] && gzip -tq "$s"/*.sql.gz 2>/dev/null; then echo "Exports des bases ($(basename "$s")) : lisibles"
+    else echo "Exports des bases : ILLISIBLES"; ok=0; fi
+    umount /mnt/essai-a/boot/firmware /mnt/essai-a /mnt/essai-b/boot/firmware /mnt/essai-b; losetup -d "$A" "$B"
+    trap - EXIT; flock -u 9
+  else echo "Copie de nuit : RESTAURATION IMPOSSIBLE"; ok=0; fi
+  rm -f "$f"
+
+  # 4. santé du SSD
+  s=$(smartctl -A /dev/nvme0n1 2>/dev/null) || true
+  usure=$(awk -F: '/Percentage Used/ {gsub(/[ %]/, "", $2); print $2}' <<< "$s")
+  arrets=$(awk -F: '/Unsafe Shutdowns/ {gsub(/[ ,]/, "", $2); print $2}' <<< "$s")
+  erreurs=$(awk -F: '/Media and Data Integrity Errors/ {gsub(/[ ,]/, "", $2); print $2}' <<< "$s")
+  avant=$(cat "$TRAVAIL/arrets-brutaux" 2>/dev/null || echo "$arrets"); echo "$arrets" > "$TRAVAIL/arrets-brutaux"
+  echo "SSD : usé à ${usure:-?} %, ${erreurs:-?} erreur(s), $(( ${arrets:-0} - ${avant:-0} )) arrêt(s) brutal(aux) depuis le dernier essai (${arrets:-?} au total)"
+  [ "${erreurs:-0}" = 0 ] || ok=0
+
+  echo "Durée : $(( ($(date +%s) - t0) / 60 )) min"
+  if [ $ok = 1 ]; then
+    echo "RÉSULTAT : réussi"; sleep 1
+    /usr/local/sbin/homelab-kuma-push essai
+    alerte "Essai de restauration réussi" "$(cat "$r")" low
+  else   # l'alerte critique part avec la fin du journal (homelab-alerte, OnFailure) : le résumé en dernière ligne
+    echo "RÉSULTAT : ÉCHEC ($(grep -E 'DIFFÉRENTE|IMPOSSIBLE|ERREURS|ILLISIBLES|AUCUNE|Différences avec' "$r" | cut -c1-60 | paste -sd ';'))"
+    return 1
+  fi
+}
+
+case "${1:-}" in
+  quotidienne) quotidienne ;;
+  image)       image ;;
+  envoyer)     envoyer_images && trier_images ;;   # reprendre l'envoi d'une image déjà compressée (sans attendre la copie de nuit)
+  etat)        etat ;;
+  restaurer)   shift; restaurer "$@" ;;
+  recuperer)   shift; recuperer "$@" ;;
+  kit)         kit ;;
+  essai)       essai ;;
+  agrandir)    agrandir ;;
+  *) sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 1 ;;
+esac

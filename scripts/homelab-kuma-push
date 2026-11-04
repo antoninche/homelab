@@ -1,0 +1,16 @@
+#!/bin/sh
+# Signale à Uptime Kuma qu'une tâche s'est bien déroulée (sonde de type « push »).
+# Usage : homelab-kuma-push <nom> [message] ; « tailscale » envoie l'état de la connexion Tailscale.
+# Sans signal dans le délai prévu, Kuma passe la sonde en panne et alerte via ntfy.
+n=$1; msg=${2:-OK}; st=up
+t=$(cat "/etc/homelab/secrets/kuma_push_$n" 2>/dev/null) || exit 0
+if [ "$n" = tailscale ]; then
+  if tailscale status --json 2>/dev/null | grep -q '"BackendState": *"Running"'; then
+    msg="connecté ($(tailscale ip -4))"
+  else
+    st=down; msg="déconnecté"
+  fi
+fi
+curl -fsS -m 10 -G -o /dev/null "http://127.0.0.1:8005/api/push/$t" \
+  --data-urlencode "status=$st" --data-urlencode "msg=$msg" || logger -t homelab-kuma "signal $n impossible"
+exit 0

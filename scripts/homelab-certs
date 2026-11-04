@@ -1,0 +1,7 @@
+#!/bin/sh
+# Renouvelle le certificat *.DOMAIN (Let's Encrypt, validation DNS DuckDNS) 30 jours avant expiration.
+set -eu
+. /etc/homelab/homelab.env
+export DUCKDNS_TOKEN="$(cat /etc/homelab/secrets/duckdns_token)" DUCKDNS_PROPAGATION_TIMEOUT=300
+exec lego --accept-tos --email "admin@$DOMAIN" --path /etc/homelab/lego --dns duckdns --dns.resolvers 1.1.1.1:53 \
+  --domains "$DOMAIN" --domains "*.$DOMAIN" --key-type ec256 renew --days 30 --renew-hook "docker exec proxy nginx -s reload"

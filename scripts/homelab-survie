@@ -1,0 +1,112 @@
+#!/bin/bash
+# homelab-survie : Wikipédia et bibliothèque hors ligne (Kiwix), modèles de l'IA locale, carte de France.
+# Ces fichiers (≈ 34 Go) ne sont pas copiés dans OneDrive : ils se retéléchargent avec cette commande (aria2).
+#
+#   sudo homelab-survie              ce qui est installé, et ce qui manque
+#   sudo homelab-survie telecharger  télécharge ce qui manque (après une restauration), empreintes vérifiées
+#   sudo homelab-survie maj          remplace chaque livre Kiwix par sa dernière version, s'il y en a une
+set -uo pipefail
+
+KIWIX=/srv/homelab/kiwix
+MODELES=/srv/homelab/ia/modeles
+CARTES=/srv/homelab/cartes
+SOURCE_ZIM=https://download.kiwix.org/zim
+# livres Kiwix : dossier/nom sans la date (la version la plus récente est prise)
+LIVRES="wikipedia/wikipedia_fr_all_nopic ifixit/ifixit_fr_all wikivoyage/wikivoyage_fr_all_maxi
+        wikibooks/wikibooks_fr_all_maxi other/cuisinelibre.org_fr_all"
+# modèles de l'IA (un seul en mémoire à la fois, choisi dans l'interface ; réglages : /opt/homelab/ia/modeles.ini)
+# fichier local|adresse|empreinte sha256
+HF=https://huggingface.co
+MODELES_IA="
+qwen3.5-4b-non-censure-q4_k_m.gguf|$HF/HauhauCS/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive/resolve/main/Qwen3.5-4B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf|79e28ecacf84e75b6056cf4059636d435aa9eb67795780f7b7dbc7d32a962741
+qwen3.5-2b-non-censure-q4_k_m.gguf|$HF/HauhauCS/Qwen3.5-2B-Uncensored-HauhauCS-Aggressive/resolve/main/Qwen3.5-2B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf|be3ccca13a9d1bc8b67165ea80bd103cd6151a37ad131183cc7ca388f78d9517
+qwen2.5-coder-3b-instruct-q4_k_m.gguf|$HF/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf|724fb256bec1ff062b2f65e4569e871ad2e95ab2a3989723d1769c54294730b7
+"
+CARTE_ZONE=-5.3,41.3,9.7,51.2   # France métropolitaine et Corse, détail complet (zoom 15)
+
+log() { echo "$(date +%T) $*"; }
+
+prendre() {  # url destination sha256 : 8 connexions en parallèle (le lien Wi-Fi de la résidence partage mal une seule
+  # connexion), reprenable ; le fichier n'arrive à sa place qu'une fois l'empreinte vérifiée
+  local url=$1 dest=$2 sha=$3 tmp; tmp=$(dirname "$dest")/.telechargement
+  install -d -m 700 "$tmp"
+  [ -f "$dest.part" ] && mv "$dest.part" "$tmp/$(basename "$dest")"   # reprise d'un ancien téléchargement
+  log "téléchargement : $(basename "$dest")"
+  local verif=(--checksum="sha-256=$sha" -o "$(basename "$dest")")
+  # Kiwix : fichier metalink (plusieurs miroirs à la fois, empreintes par morceau) ; le nom vient du metalink
+  [[ $url == *.meta4 ]] && verif=(--follow-metalink=mem --metalink-preferred-protocol=https)
+  if aria2c -q -c -x 8 -s 8 -k 8M --file-allocation=none --max-tries=30 --retry-wait=15 --auto-file-renaming=false \
+       --check-integrity=true "${verif[@]}" -d "$tmp" "$url"; then
+    mv "$tmp/$(basename "$dest")" "$dest"; rmdir "$tmp" 2>/dev/null; log "OK : $(basename "$dest") ($(du -h "$dest" | cut -f1))"
+  else log "échec ou empreinte fausse : $(basename "$dest") (relancer la même commande reprend le téléchargement)"; return 1; fi
+}
+
+derniere() {  # dossier/nom → nom de fichier de la version la plus récente chez Kiwix
+  local d=${1%/*} n=${1##*/}
+  curl -fsL "$SOURCE_ZIM/$d/" | grep -o "\"${n}_[0-9-]*[a-z]\?\.zim\"" | tr -d '"' | sort -V | tail -1
+}
+
+livre() {  # dossier/nom [maj] : installe la dernière version si le livre manque (ou s'il y en a une nouvelle avec maj)
+  local d=${1%/*} n=${1##*/} f actuel
+  actuel=$(ls -1 "$KIWIX/${n}_"*.zim 2>/dev/null | sort -V | tail -1)
+  [ -n "$actuel" ] && [ "${2:-}" != maj ] && return 0
+  f=$(derniere "$1") || true
+  [ -n "$f" ] || { log "introuvable chez Kiwix : $n"; return 1; }
+  [ "$(basename "${actuel:-x}")" = "$f" ] && { log "à jour : $f"; return 0; }
+  prendre "$SOURCE_ZIM/$d/$f.meta4" "$KIWIX/$f" - || return 1
+  [ -n "$actuel" ] && { rm -f "$actuel"; log "ancienne version retirée : $(basename "$actuel")"; }
+  systemctl try-restart homelab-wiki-conteneur.service   # le wiki prend le nouveau livre à son prochain réveil
+}
+
+telecharger() {
+  install -d -m 755 "$KIWIX" "$MODELES" "$CARTES"
+  local nom url sha
+  while IFS='|' read -r nom url sha; do
+    [ -n "$nom" ] && [ ! -f "$MODELES/$nom" ] && prendre "$url" "$MODELES/$nom" "$sha"
+  done <<< "$MODELES_IA"
+  for l in $LIVRES; do livre "$l"; done
+  if [ ! -f "$CARTES/france.pmtiles" ]; then
+    # pas de reprise possible : une extraction coupée (débit trop faible, réseau) repart de zéro, 3 essais
+    local build n; build=$(date -d yesterday +%Y%m%d)
+    for n in 1 2 3; do
+      log "extraction de la carte de France (≈ 10 Go, essai $n) depuis build.protomaps.com/$build.pmtiles"
+      rm -f "$CARTES/france.pmtiles.part"
+      if pmtiles extract "https://build.protomaps.com/$build.pmtiles" "$CARTES/france.pmtiles.part" --bbox=$CARTE_ZONE \
+           --download-threads=8 2>&1 | tr '\r' '\n' | { grep -v 'fetching' || true; } | tail -3 \
+         && pmtiles verify "$CARTES/france.pmtiles.part" >/dev/null; then
+        mv "$CARTES/france.pmtiles.part" "$CARTES/france.pmtiles"; log "OK : carte de France"; break
+      fi
+      log "extraction interrompue"; sleep 120
+    done
+    rm -f "$CARTES/france.pmtiles.part"
+  fi
+  chmod -R a+rX "$KIWIX" "$MODELES" "$CARTES"
+  # bilan en notification silencieuse (ntfy, sujet homelab)
+  curl -fsS -m 20 -H "Authorization: Bearer $(cat /etc/homelab/secrets/ntfy_token)" -H "Title: Coin survie : téléchargements finis" \
+    -H "Priority: low" -H "Tags: camping" --data-binary "$(etat)" http://127.0.0.1:8011/homelab >/dev/null || true
+}
+
+etat() {
+  echo "Bibliothèque Kiwix ($KIWIX) :"
+  ls -1sh "$KIWIX"/*.zim 2>/dev/null | sed 's#/.*/#  #' || echo "  (vide)"
+  echo "Modèles de l'IA ($MODELES) :"
+  local nom manque=0
+  while IFS='|' read -r nom _; do
+    [ -n "$nom" ] || continue
+    if [ -f "$MODELES/$nom" ]; then echo "  $(du -h "$MODELES/$nom" | cut -f1)  $nom"; else echo "  manquant : $nom"; manque=1; fi
+  done <<< "$MODELES_IA"
+  echo "Carte de France : $([ -f "$CARTES/france.pmtiles" ] && du -h "$CARTES/france.pmtiles" | cut -f1 || echo manquante)"
+  for l in $LIVRES; do ls "$KIWIX/${l##*/}_"*.zim >/dev/null 2>&1 || { echo "manque : ${l##*/}"; manque=1; }; done
+  [ $manque = 1 ] || [ ! -f "$CARTES/france.pmtiles" ] \
+    && echo "→ sudo homelab-survie telecharger"
+  return 0
+}
+
+[ "$(id -u)" = 0 ] || { echo "À lancer avec sudo." >&2; exit 1; }
+case "${1:-etat}" in
+  etat)        etat ;;
+  telecharger) telecharger ;;
+  livres)      install -d -m 755 "$KIWIX"; for l in $LIVRES; do livre "$l"; done; chmod -R a+rX "$KIWIX" ;;
+  maj)         for l in $LIVRES; do livre "$l" maj; done; chmod -R a+rX "$KIWIX" ;;
+  *)           sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

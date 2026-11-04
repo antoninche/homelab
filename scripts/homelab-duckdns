@@ -1,0 +1,54 @@
+#!/bin/sh
+# Adresses du homelab :
+#  - DuckDNS : DOMAIN (et ses sous-domaines) -> adresse Tailscale du Pi, joignable de partout par les appareils
+#    connectés à Tailscale (adresse locale tant que Tailscale n'est pas connecté) ; rien n'est exposé sur Internet ;
+#  - AdGuard (app HA) : mêmes noms -> adresse locale du Pi, pour les appareils du réseau local sans Tailscale.
+set -eu
+. /etc/homelab/homelab.env
+token=$(cat /etc/homelab/secrets/duckdns_token)
+etat=/var/lib/homelab/adguard-ip
+
+# réponses d'AdGuard (app HA) pour les noms du homelab, par client :
+#  - Home Assistant lui-même (réseau interne 172.30.32.0/23 de HA OS) -> 10.99.0.1, seul chemin de la VM vers le Pi ;
+#  - tous les autres appareils du réseau local -> adresse locale du Pi.
+# Appliqué seulement quand l'adresse locale change (via l'agent invité de la VM).
+adguard_local() {
+  [ "$(cat "$etat" 2>/dev/null)" = "regles:$1" ] && return 0
+  virsh -q domstate homeassistant 2>/dev/null | grep -q running || return 0
+  script=$(cat <<EOF
+A=http://127.0.0.1:45158/control
+curl -s \$A/rewrite/list | tr '{' '\n' | sed -n 's/.*"domain":"\([^"]*\)","answer":"\([^"]*\)".*/\1 \2/p' | grep "$DOMAIN" |
+while read d a; do curl -s -o /dev/null -X POST -H 'Content-Type: application/json' \$A/rewrite/delete -d "{\"domain\":\"\$d\",\"answer\":\"\$a\"}"; done
+# seules les règles du homelab sont remplacées ; les autres (exceptions ajoutées à la main) sont gardées
+curl -s \$A/filtering/status | jq -c --arg d "$DOMAIN" '{rules: ([.user_rules[] | select(contains(\$d) | not)] + ["||$DOMAIN^\$dnsrewrite=NOERROR;A;10.99.0.1,client=172.30.32.0/23", "||$DOMAIN^\$dnsrewrite=NOERROR;A;$1,client=~172.30.32.0/23"])}' |
+curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \$A/filtering/set_rules -d @-
+EOF
+)
+  r=$(ha-vm-exec "echo $(printf %s "$script" | base64 -w0) | base64 -d | sh")
+  if [ "$(echo $r)" = "200" ]; then
+    install -d /var/lib/homelab; echo "regles:$1" > "$etat"; logger -t homelab-duckdns "AdGuard : $DOMAIN -> $1 (HA -> 10.99.0.1)"
+  else
+    logger -t homelab-duckdns "AdGuard : règles impossibles à appliquer ($r)"
+  fi
+}
+
+# réseau scanné par NetAlertX : suit le réseau local de l'Ethernet (parents, appart…)
+netalertx_reseau() {
+  c=/srv/homelab/netalertx/config/app.conf; [ -f "$c" ] || return 0
+  net=$(ip -4 route show dev eth0 proto kernel | awk '{print $1; exit}'); [ -n "$net" ] || return 0
+  grep -q "^SCAN_SUBNETS=\['$net --interface=eth0'" "$c" && return 0
+  sed -i "s|^SCAN_SUBNETS=.*|SCAN_SUBNETS=['$net --interface=eth0','10.99.0.0/24 --interface=virbr-ha']|" "$c"
+  logger -t homelab-duckdns "NetAlertX : réseau scanné $net"
+}
+
+local_ip=$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+netalertx_reseau
+ts_ip=$(tailscale ip -4 2>/dev/null || true)
+[ -n "$local_ip" ] && adguard_local "$local_ip"
+
+ip=${ts_ip:-$local_ip}
+[ -n "$ip" ] || { logger -t homelab-duckdns "pas d'adresse IPv4"; exit 1; }
+r=$(printf 'url = "https://www.duckdns.org/update?domains=%s&token=%s&ip=%s"\n' "$DUCKDNS_SUBDOMAIN" "$token" "$ip" | curl -fsS -m 20 -K -)
+[ "$r" = OK ] || { logger -t homelab-duckdns "échec DuckDNS : $r"; exit 1; }
+if [ -n "$ts_ip" ]; then src=Tailscale; else src="local, Tailscale non connecté"; fi
+logger -t homelab-duckdns "$ip publié ($src)"

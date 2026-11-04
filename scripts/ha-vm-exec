@@ -1,0 +1,5 @@
+#!/bin/bash
+# ha-vm-exec "commande" : exécute une commande dans la VM HA OS via l'agent invité
+pid=$(virsh qemu-agent-command homeassistant "$(python3 -c 'import json,sys;print(json.dumps({"execute":"guest-exec","arguments":{"path":"/bin/sh","arg":["-c",sys.argv[1]],"capture-output":True}}))' "$1")" | python3 -c 'import json,sys;print(json.load(sys.stdin)["return"]["pid"])')
+for i in $(seq 1 120); do out=$(virsh qemu-agent-command homeassistant "{\"execute\":\"guest-exec-status\",\"arguments\":{\"pid\":$pid}}"); echo "$out" | grep -q '"exited":true' && break; sleep 1; done
+echo "$out" | python3 -c 'import json,sys,base64;r=json.load(sys.stdin)["return"];print(base64.b64decode(r.get("out-data","")).decode(errors="replace"),base64.b64decode(r.get("err-data","")).decode(errors="replace"),end="")'
