@@ -17,7 +17,7 @@ Le réseau de l'appartement est `192.168.8.0/24`. J'ai découpé les adresses en
 
 Les appareils Apple utilisent une adresse Wi-Fi privée. Réglée sur « Fixe », elle ne change plus pour ce réseau, ce qui permet de la réserver. Le plan est aussi décrit dans [`plan.json`](../stacks/proxy/site/noc/plan.json), lu par la salle de contrôle ; je le garde synchronisé avec les réservations du routeur.
 
-Le routeur diffuse le Wi-Fi de l'appartement en WPA2 sur 2,4 GHz et 5 GHz (le capteur FP2 n'accepte que le 2,4 GHz). Sa radio 5 GHz sert aussi au lien avec la résidence, dont le point d'accès change de canal toutes les 10 minutes. Le routeur suit, et les appareils connectés en 5 GHz se reconnectent à chaque fois. Je prévois de réserver la radio 5 GHz au lien avec la résidence.
+Le routeur diffuse le Wi-Fi de l'appartement en WPA2, uniquement en 2,4 GHz. Sa radio 5 GHz sert au lien avec la résidence, dont le point d'accès change de canal toutes les 10 minutes. Le routeur suit, et les appareils connectés en 5 GHz se reconnectaient à chaque fois. Le Nest Hub en faisait partie, et comme c'est lui qui relie le réseau Thread au reste de l'appartement, la lampe IKEA décrochait de Home Assistant. J'ai donc coupé le 5 GHz côté appartement.
 
 ## DNS
 

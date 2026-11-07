@@ -108,7 +108,6 @@ Les mots de passe, jetons et clés sont générés sur le Pi et rangés dans `/e
 ## À faire
 
 - [ ] DNS de secours sur le routeur, utilisé seulement si AdGuard ne répond pas.
-- [ ] Réserver la radio 5 GHz du routeur au lien avec la résidence (son point d'accès change de canal toutes les 10 minutes).
 - [ ] Home Assistant : bannissement après des échecs de connexion, double authentification.
 - [ ] Arrêter Portainer, qui donne un accès complet à Docker et sert très peu.
 - [ ] Une seconde destination pour les sauvegardes, indépendante du compte étudiant.

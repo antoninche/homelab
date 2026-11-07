@@ -2,6 +2,11 @@
 
 Les changements importants, du plus récent au plus ancien.
 
+## 2026-11-06
+
+- Wi-Fi de l'appartement en 2,4 GHz uniquement. La radio 5 GHz du routeur ne sert plus qu'au lien avec la résidence, dont les changements de canal déconnectaient le Nest Hub et, à travers lui, la lampe IKEA sur Thread.
+- Home Assistant relance le serveur Matter quand un appareil Matter reste injoignable 10 minutes.
+
 ## 2026-11-04
 
 - Reconnexion automatique au portail captif de la résidence, vérifiée chaque minute (`homelab-portail`).
