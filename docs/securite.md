@@ -14,6 +14,7 @@ Je considère le réseau de l'appartement comme sûr, puisque j'y suis seul. Ça
 
 - Aucun port entrant, ni sur le routeur ni ailleurs. Accès à distance uniquement par Tailscale.
 - Pare-feu nftables sur le Pi, refus par défaut. SSH, HTTP et HTTPS seulement depuis le réseau local et Tailscale. fail2ban sur SSH.
+- La télé de mes parents, reliée par Tailscale, ne peut joindre que Jellyfin : la politique d'accès Tailscale et le pare-feu du Pi ne lui ouvrent que le port 8443.
 - DNS chiffré (DNS-over-HTTPS) avec DNSSEC, publicités et pistage bloqués pour tout l'appartement.
 - Routeur allégé : j'ai désinstallé la télé-administration du constructeur, le serveur VPN et le partage de fichiers, ce qui ferme les ports correspondants.
 - SSH par clé uniquement, sans mot de passe et sans redirection de ports.

@@ -38,7 +38,21 @@ Le routeur n'a pas encore de DNS de secours, donc si le Pi est éteint, plus auc
 
 Le Pi, l'iPhone et le Mac sont dans le même réseau Tailscale. Le nom DuckDNS pointe vers l'adresse Tailscale du Pi, mise à jour toutes les 5 minutes par `homelab-duckdns`. L'expiration de la clé Tailscale du Pi est désactivée pour que l'accès ne s'arrête pas tout seul. Voir l'[ADR 0002](adr/0002-acces-distant-par-tailscale.md).
 
-Le pare-feu du Pi ([`firewall.nft`](../systeme/etc/homelab/firewall.nft)) est une table nftables séparée, qui ne touche pas aux règles de Docker et de libvirt. Tout est refusé par défaut. SSH, HTTP et HTTPS sont acceptés depuis les réseaux privés et Tailscale, et la VM Home Assistant peut joindre le DNS, le DHCP et HTTPS. Les connexions refusées sont comptées et affichées dans la salle de contrôle, et fail2ban bannit les adresses qui insistent sur SSH.
+La télé de mes parents est aussi dans ce réseau, pour qu'ils puissent regarder la médiathèque. Elle porte l'étiquette `tag:tele`, et la politique d'accès Tailscale ne lui ouvre qu'un port du Pi :
+
+```json
+{
+  "tagOwners": { "tag:tele": ["autogroup:admin"] },
+  "grants": [
+    { "src": ["autogroup:member"], "dst": ["*"], "ip": ["*"] },
+    { "src": ["tag:tele"], "dst": ["100.64.0.10"], "ip": ["tcp:8443"] }
+  ]
+}
+```
+
+Sur ce port, nginx ne sert que Jellyfin ([`films.conf.tpl`](../stacks/proxy/templates/films.conf.tpl)), et le pare-feu du Pi refuse tout le reste venant de la télé. La restriction est appliquée deux fois, par Tailscale et sur le Pi. Mes parents ont leur propre compte Jellyfin.
+
+Le pare-feu du Pi ([`firewall.nft`](../systeme/etc/homelab/firewall.nft)) est une table nftables séparée, qui ne touche pas aux règles de Docker et de libvirt. Tout est refusé par défaut. SSH, HTTP et HTTPS sont acceptés depuis les réseaux privés et Tailscale, sauf pour la télé de mes parents qui n'a que le port 8443, et la VM Home Assistant peut joindre le DNS, le DHCP et HTTPS. Les connexions refusées sont comptées et affichées dans la salle de contrôle, et fail2ban bannit les adresses qui insistent sur SSH.
 
 ## Portail captif
 

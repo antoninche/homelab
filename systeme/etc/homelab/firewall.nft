@@ -35,7 +35,10 @@ table inet homelab {
         iifname "docker0" tcp dport { 80, 443 } accept
         iifname "br-*" tcp dport { 80, 443 } accept
 
-        # appareils connectés via Tailscale : mêmes accès que le réseau local
+        # télé des parents (Tailscale « tv-salon ») : uniquement Jellyfin, servi sur le port 8443 ; rien d'autre
+        iifname "tailscale0" ip saddr 100.64.0.20 tcp dport 8443 accept
+        iifname "tailscale0" ip saddr 100.64.0.20 counter drop
+        # autres appareils connectés via Tailscale : mêmes accès que le réseau local
         iifname "tailscale0" tcp dport { 22, 80, 443 } accept
         # Tailscale : connexions directes entre appareils (sinon relais chiffrés, plus lents)
         udp dport 41641 accept

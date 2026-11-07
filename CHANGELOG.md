@@ -6,6 +6,7 @@ Les changements importants, du plus récent au plus ancien.
 
 - Wi-Fi de l'appartement en 2,4 GHz uniquement. La radio 5 GHz du routeur ne sert plus qu'au lien avec la résidence, dont les changements de canal déconnectaient le Nest Hub et, à travers lui, la lampe IKEA sur Thread.
 - Home Assistant relance le serveur Matter quand un appareil Matter reste injoignable 10 minutes.
+- La télé de mes parents accède à Jellyfin par Tailscale, et à rien d'autre : politique d'accès Tailscale, port 8443 dans nginx, pare-feu du Pi ([docs/reseau.md](docs/reseau.md#accès-à-distance-et-pare-feu)).
 
 ## 2026-11-04
 

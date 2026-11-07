@@ -8,7 +8,7 @@ Une connexion traverse plusieurs couches avant d'arriver à un service :
 | Tailscale | Seul chemin depuis l'extérieur, un réseau privé chiffré (WireGuard) entre mes appareils et le Pi. |
 | Wi-Fi de la résidence | Réseau ouvert avec portail captif. Le routeur de l'appartement s'y connecte comme un client. |
 | Routeur GL.iNet (`192.168.8.1`) | Crée le réseau de l'appartement et refuse ce qui arrive de la résidence. |
-| Pare-feu du Pi (nftables) | Tout est refusé par défaut, sauf SSH, HTTP et HTTPS depuis le réseau local et Tailscale. |
+| Pare-feu du Pi (nftables) | Tout est refusé par défaut, sauf SSH, HTTP et HTTPS depuis le réseau local et Tailscale. La télé de mes parents n'a accès qu'à Jellyfin. |
 | nginx | Point d'entrée unique vers les services, en HTTPS, avec un fichier de configuration par adresse. |
 | Services | Conteneurs Docker liés à `127.0.0.1` et machine virtuelle Home Assistant. |
 | SSD NVMe | Système, données, disque de la VM. |
