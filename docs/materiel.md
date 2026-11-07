@@ -20,7 +20,7 @@ Le routeur GL.iNet se connecte au Wi-Fi de la résidence comme n'importe quel ap
 | Capteur de présence Aqara FP2 | HomeKit | Présence dans l'appartement |
 | Google Nest Hub | Cast | Écran et enceinte, routeur Thread pour les objets IKEA |
 | Lampe IKEA VARMBLIXT, télécommande BILRESA | Matter sur Thread | Lumière avec une teinte qui suit l'heure |
-| Prise Meross | Matter sur Wi-Fi | Mesure de consommation |
+| Prise Meross | Matter sur Wi-Fi | Lampe ronde, mesure de consommation |
 | Sonde et passerelle Tuya | Cloud Tuya | Température et humidité extérieures |
 
 Tout est regroupé dans Home Assistant. Certains objets restent aussi dans Google Home grâce au multi-administrateur de Matter.
